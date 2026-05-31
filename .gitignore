@@ -1,0 +1,30 @@
+# Virtual Environment
+.venv/
+.venv-bazaar-data/
+venv/
+ENV/
+pyvenv.cfg
+
+# Python Caches & Build Files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+
+# Local Project Data & Databases
+*.db
+*.db-journal
+*.db-wal
+consolidated_bazaar_metrics.json
+
+# User Configurations & Environment Variables
+.env
+.env.*
+config.yaml
+
+# IDEs & System Files
+.vscode/
+.idea/
+.DS_Store
+credentials.yaml

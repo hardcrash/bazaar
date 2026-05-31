@@ -1,0 +1,24 @@
+{
+    "categories": {
+        "Motherboard": {
+            "strategy_class": "RegexChipsetStrategy",
+            "config": {
+                "brands": ["ASUS", "MSI", "GIGABYTE", "ASROCK", "EVGA", "NZXT"],
+                "patterns": [
+                    "\\b(X890|X690|X870E|X670E|X570|B650|B850|Z790|Z690|B550|B450|A320|X470)(M|I|\\b)\\s*([A-Z0-9\\-_\\s]{0,20})"
+                ],
+                "noise_words": ["AM4", "AM5", "DDR4", "DDR5", "AMD", "INTEL", "CPU", "MOTHERBOARD", "BOARD", "SOCKET", "MATX", "ATX", "ITX", "WIFI", "WIFI6E", "LGA", "1718"]
+            }
+        },
+        "CPU": {
+            "strategy_class": "RegexLookaheadStrategy",
+            "config": {
+                "brands": ["AMD", "INTEL"],
+                "patterns": [
+                    "RYZEN\\s+([3579](?:\\s+PRO)?\\s+\\d{4,5}[XDG3]*\\b|\\d{4,5}[XDG3]*\\b)"
+                ],
+                "prefix": "Ryzen"
+            }
+        }
+    }
+}

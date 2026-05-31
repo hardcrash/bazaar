@@ -1,0 +1,58 @@
+{
+    "active_categories": [
+        "cpus_ryzen_am4",
+        "motherboards_x890",
+        "motherboards_x690",
+        "motherboards_x870e",
+        "motherboards_x670e",
+        "motherboards_z790",
+        "motherboards_b650",
+        "motherboards_b850"
+    ],
+    "global_settings": {
+        "max_items_per_sweep": 1000,
+        "page_size": 100
+    },
+    "categories": {
+        "cpus_ryzen_am4": {
+            "base_query": "Ryzen AM4",
+            "parser_category": "CPU",
+            "parsing_strategy": "RegexLookaheadStrategy"
+        },
+        "motherboards_x890": {
+            "base_query": "X890 Motherboard",
+            "parser_category": "Motherboard",
+            "parsing_strategy": "RegexChipsetStrategy"
+        },
+        "motherboards_x690": {
+            "base_query": "X690 Motherboard",
+            "parser_category": "Motherboard",
+            "parsing_strategy": "RegexChipsetStrategy"
+        },
+        "motherboards_x870e": {
+            "base_query": "X870E Motherboard",
+            "parser_category": "Motherboard",
+            "parsing_strategy": "RegexChipsetStrategy"
+        },
+        "motherboards_x670e": {
+            "base_query": "X670E Motherboard",
+            "parser_category": "Motherboard",
+            "parsing_strategy": "RegexChipsetStrategy"
+        },
+        "motherboards_z790": {
+            "base_query": "Z790 Motherboard",
+            "parser_category": "Motherboard",
+            "parsing_strategy": "RegexChipsetStrategy"
+        },
+        "motherboards_b650": {
+            "base_query": "B650 Motherboard",
+            "parser_category": "Motherboard",
+            "parsing_strategy": "RegexChipsetStrategy"
+        },
+        "motherboards_b850": {
+            "base_query": "B850 Motherboard",
+            "parser_category": "Motherboard",
+            "parsing_strategy": "RegexChipsetStrategy"
+        }
+    }
+}
