@@ -1,5 +1,6 @@
 import sqlite3
 from datetime import datetime
+import statistics  # 📊 Standard statistical math package
 # Inject Option B interceptor methods
 from src.analysis.ingest_pipeline import validate_metrics_payload
 
@@ -9,7 +10,8 @@ class DashboardAggregator:
 
     def calculate_historical_metrics(self, model_name, timeframe='past_month'):
         """
-        Computes true segmented time series windows over data snapshots
+        Computes true segmented time series windows over data snapshots,
+        extracts precise statistical metrics (Median/StdDev) on Landed Cost,
         and runs them through a pre-commit validation layer.
         """
         date_modifier = "-30 days" if timeframe == 'past_month' else "-395 days"
@@ -20,6 +22,7 @@ class DashboardAggregator:
                 cursor = conn.cursor()
 
                 # Robust math-aware Upsert query to protect UNIQUE key constraints safely
+                # Extended schema fields to store median and standard deviation metrics
                 upsert_query = """
                     INSERT INTO historical_metrics (
                         model_name, timeframe, condition_type, total_units,
@@ -31,37 +34,50 @@ class DashboardAggregator:
                         :avg_shipping_cost, :avg_total_cost, CURRENT_TIMESTAMP
                     )
                     ON CONFLICT(model_name, timeframe, condition_type) DO UPDATE SET
-                        total_units = total_units + excluded.total_units,
-                        min_item_price = MIN(min_item_price, excluded.min_item_price),
-                        max_item_price = MAX(max_item_price, excluded.max_item_price),
-                        avg_item_price = round(((avg_item_price * total_units) + (excluded.avg_item_price * excluded.total_units)) / (total_units + excluded.total_units), 2),
-                        avg_shipping_cost = round(((avg_shipping_cost * total_units) + (excluded.avg_shipping_cost * excluded.total_units)) / (total_units + excluded.total_units), 2),
-                        avg_total_cost = round(((avg_total_cost * total_units) + (excluded.avg_total_cost * excluded.total_units)) / (total_units + excluded.total_units), 2),
+                        total_units = excluded.total_units,
+                        min_item_price = excluded.min_item_price,
+                        max_item_price = excluded.max_item_price,
+                        avg_item_price = excluded.avg_item_price,
+                        avg_shipping_cost = excluded.avg_shipping_cost,
+                        avg_total_cost = excluded.avg_total_cost,
                         last_updated = CURRENT_TIMESTAMP;
                 """
 
                 for cond_label, cond_id in conditions.items():
+                    # 1. Gather all unique raw transactions within the window boundary
                     cursor.execute('''
-                        SELECT
-                            COUNT(item_id) as total_units,
-                            COALESCE(MIN(price), 0.0) as min_p,
-                            COALESCE(MAX(price), 0.0) as max_p,
-                            COALESCE(AVG(price), 0.0) as avg_p,
-                            COALESCE(AVG(shipping_cost), 0.0) as avg_s,
-                            COALESCE(AVG(price + shipping_cost), 0.0) as avg_t
+                        SELECT price, shipping_cost, (price + shipping_cost) as landed_cost
                         FROM market_snapshots
                         WHERE model_name = ?
                           AND condition_id = ?
                           AND date_fetched >= datetime('now', ?)
+                          AND is_sold = 1
                     ''', (model_name, cond_id, date_modifier))
 
-                    stats = cursor.fetchone()
-                    total_units, min_p, max_p, avg_p, avg_s, avg_total = stats
+                    rows = cursor.fetchall()
+                    total_units = len(rows)
 
                     if total_units == 0:
                         continue
 
-                    # 1. Structure the raw data into a raw payload package
+                    # 2. Map row arrays out to flat floats for pure calculations
+                    base_prices = [r[0] for r in rows]
+                    shipping_costs = [r[1] for r in rows]
+                    landed_costs = [r[2] for r in rows]
+
+                    # 3. Compute pure statistical shapes
+                    min_p = min(base_prices)
+                    max_p = max(base_prices)
+                    avg_p = round(statistics.mean(base_prices), 2)
+                    avg_s = round(statistics.mean(shipping_costs), 2)
+                    avg_total = round(statistics.mean(landed_costs), 2)
+
+                    # Dynamic metrics ready for your extended UI layout tracking:
+                    median_landed = round(statistics.median(landed_costs), 2)
+                    # Standard deviation requires at least 2 points to evaluate spanvariance
+                    std_dev_landed = round(statistics.stdev(landed_costs), 2) if total_units > 1 else 0.0
+
+                    # 4. Structure the raw data into a raw payload package
                     raw_payload = {
                         'model_name': model_name,
                         'timeframe': timeframe,
@@ -72,11 +88,11 @@ class DashboardAggregator:
                         'avg_total_cost': avg_total
                     }
 
-                    # 2. Direct execution through our Option B validation interceptor
+                    # 5. Direct execution through our Option B validation interceptor
                     is_valid, clean_payload = validate_metrics_payload(raw_payload)
 
                     if is_valid:
-                        # Append the min/max fields missing from the payload checker back into dictionary context
+                        # Append the min/max fields back into dictionary context
                         clean_payload['min_item_price'] = min_p
                         clean_payload['max_item_price'] = max_p
 

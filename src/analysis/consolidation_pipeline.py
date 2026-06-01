@@ -114,8 +114,9 @@ def run_consolidation_pipeline(categories: list = ["Motherboard", "CPU"]):
 
         logger.info(f"💾 Changes successfully written to disk. {items_updated} items normalized.")
 
-        with open(cache_file, "w") as f:
-            json.dump(consolidated_map, f, indent=4)
+        with open(output_file, "w") as f:
+            json.dump(consolidated_data, f, indent=4)
+        print(f"  ✅ Category metrics cleanly written to {output_file}")
         return True
 
     except Exception as e:

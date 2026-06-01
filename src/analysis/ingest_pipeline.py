@@ -1,6 +1,5 @@
 import sqlite3
 import logging
-from check_db import normalize_model_name  # Reusing our core normalization utility
 
 # Configure logging for tracking rejected data
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -23,16 +22,19 @@ def standardize_timeframe(tf_string):
 
     return mapping.get(tf_clean, tf_clean)
 
-def validate_metrics_payload(payload):
+# 🛠️ Fixed: Removed 'normalize_model_name' import from check_db.py entirely.
+# Passed valid_categories down dynamically to isolate the boundary checks.
+def validate_metrics_payload(payload, valid_categories=None):
     """
-    Validates the data fields.
+    Validates the data fields against dynamic runtime configuration constraints.
     Returns (True, cleaned_payload) if safe, or (False, reason) if corrupted.
     """
     try:
-        # 1. Normalize name and timeframe
-        model_name = normalize_model_name(payload.get('model_name'))
+        # 1. Cast keys cleanly
+        model_name = str(payload.get('model_name', '')).strip()
         timeframe = standardize_timeframe(payload.get('timeframe'))
         condition = str(payload.get('condition_type', '')).strip().lower()
+        category = payload.get('category')  # Track incoming category cleanly
 
         # 2. Extract and cast numbers safely
         total_units = int(payload.get('total_units', 0))
@@ -40,9 +42,13 @@ def validate_metrics_payload(payload):
         avg_shipping = float(payload.get('avg_shipping_cost', 0.0))
         avg_total = float(payload.get('avg_total_cost', 0.0))
 
-        # --- VALIDATION RULES ---
-        if model_name == "Unknown":
+        # --- MODULAR VALIDATION RULES ---
+        if not model_name or model_name.lower() in ["unknown", ""]:
             return False, "Missing or unparseable model name"
+
+        # 🌟 Dynamic Category Lookups (Slamming the door on hardcoded strings)
+        if valid_categories and category not in valid_categories:
+            return False, f"Category '{category}' is not approved in runtime market configuration"
 
         if timeframe not in ['past_month', 'past_year']:
             return False, f"Unsupported timeframe token: '{timeframe}'"
@@ -70,14 +76,18 @@ def validate_metrics_payload(payload):
     except (ValueError, TypeError) as err:
         return False, f"Data type parsing mismatch: {str(err)}"
 
-def ingest_historical_metrics(cursor, raw_payloads):
+def ingest_historical_metrics(cursor, raw_payloads, allowed_categories=None):
     """
     Processes, sanitizes, and inserts batch records safely.
-    Expects an active sqlite3 cursor and a list of dictionaries.
+    Expects an active sqlite3 cursor, a list of dictionaries, and dynamic valid categories.
     """
     success_count = 0
     skipped_count = 0
 
+    # Safely format categories to an immutable lookup set
+    category_set = set(allowed_categories) if allowed_categories else None
+
+    # Note: Updated upsert query matches your fresh DashboardAggregator logic
     insert_query = """
         INSERT INTO historical_metrics (
             model_name, timeframe, condition_type, total_units,
@@ -87,14 +97,15 @@ def ingest_historical_metrics(cursor, raw_payloads):
             :avg_item_price, :avg_shipping_cost, :avg_total_cost
         )
         ON CONFLICT(model_name, timeframe, condition_type) DO UPDATE SET
-            total_units = total_units + excluded.total_units,
-            avg_item_price = round(((avg_item_price * total_units) + (excluded.avg_item_price * excluded.total_units)) / (total_units + excluded.total_units), 2),
-            avg_shipping_cost = round(((avg_shipping_cost * total_units) + (excluded.avg_shipping_cost * excluded.total_units)) / (total_units + excluded.total_units), 2),
-            avg_total_cost = round(((avg_total_cost * total_units) + (excluded.avg_total_cost * excluded.total_units)) / (total_units + excluded.total_units), 2);
+            total_units = excluded.total_units,
+            avg_item_price = excluded.avg_item_price,
+            avg_shipping_cost = excluded.avg_shipping_cost,
+            avg_total_cost = excluded.avg_total_cost;
     """
 
     for idx, raw_data in enumerate(raw_payloads):
-        is_valid, clean_data = validate_metrics_payload(raw_data)
+        # Pass the dynamic categories config file list down to validation layer
+        is_valid, clean_data = validate_metrics_payload(raw_data, valid_categories=category_set)
 
         if is_valid:
             cursor.execute(insert_query, clean_data)
