@@ -1,13 +1,14 @@
-# main.py
 import sys
+import os
 import json
+import sqlite3
 from src.util.config_loader import load_yaml
 from src.database.db_manager import DatabaseManager
 from src.api.ebay.ebay_client import EbayClient
-from src.analysis.parser import ComponentParserRegistry  # Using our dynamic strategy registry
+from src.analysis.parser import ComponentParserRegistry  # Dynamic strategy registry
 from src.analysis.curator import MarketCurator
 from src.analysis.dashboard_aggregator import DashboardAggregator
-from src.analysis.consolidation_pipeline import run_consolidation_pipeline
+from src.analysis.ingest_pipeline import ingest_historical_metrics
 
 def print_usage():
     print("""
@@ -31,7 +32,11 @@ def main():
     # Load Configurations
     config = load_yaml("config.yaml")
     creds = load_yaml("credentials.yaml")
-    db_name = config.get("database_name", "bazaar.db")
+    db_name = config.get("database", {}).get("path", "bazaar.db")
+
+    # Extract allowed categories from config.yaml directly
+    market_rules = config.get("market_rules", {})
+    allowed_categories = market_rules.get("allowed_categories", ["CPU", "Motherboard"])
 
     # Load search parameters & strategies layout file
     with open("searches.json", "r") as f:
@@ -55,25 +60,27 @@ def main():
             sandbox=use_sandbox
         )
 
-        # Instantiating our dynamic strategy engine mapper rather than single class parser
+        # Instantiating dynamic strategy engine mapper
         parser_factory = ComponentParserRegistry("parser_config.json")
 
         global_settings = search_registry.get("global_settings", {})
         MAX_ITEMS_PER_SWEEP = global_settings.get("max_items_per_sweep", 1000)
         PAGE_SIZE = global_settings.get("page_size", 100)
 
-        active_targets = search_registry.get("active_pipeline_targets", search_registry.get("active_categories", []))
+        active_targets = search_registry.get("active_pipeline_targets", [])
 
         for target_key in active_targets:
             cat_info = search_registry["categories"].get(target_key)
             if not cat_info:
-                print(f"⚠️ Target key '{target_key}' missing configuration definitions. Skipping.")
                 continue
 
             base_query = cat_info["base_query"]
             parser_cat = cat_info["parser_category"]
 
-            # Resolve our parsing strategy dynamically from our factory
+            if parser_cat not in allowed_categories:
+                print(f"⚠️ Category '{parser_cat}' is not in config.yaml allowed_categories. skipping stream execution.")
+                continue
+
             strategy = parser_factory.get_strategy_for_category(parser_cat)
 
             for condition_label, condition_id in [("working", 3000), ("broken", 7000)]:
@@ -97,12 +104,10 @@ def main():
                             title = item.get("title", "")
                             item_id = item.get("itemId")
 
-                            # Execute the polymorphic title parse step
                             brand, model_name = "UNKNOWN", None
                             if strategy:
                                 brand, model_name = strategy.parse_title(title.upper())
 
-                            # Standard fallback if patterns couldn't capture details
                             if not model_name:
                                 model_name = "UNKNOWN"
 
@@ -127,7 +132,7 @@ def main():
                                 shipping_cost=shipping_cost,
                                 currency=item.get("price", {}).get("currency", "USD"),
                                 condition_id=condition_id,
-                                is_sold=False
+                                is_sold=True
                             )
 
                         total_harvested_for_query += len(items)
@@ -152,33 +157,67 @@ def main():
     if command in ["consolidate", "all"]:
         print("\n[🤖] Initializing Heuristic Strategy Consolidation Loop...")
 
-        # 1. Collect all your active category parser strings into a single list
-        active_categories = []
-        for target_key in search_registry.get("active_categories", []):
-            cat_info = search_registry["categories"].get(target_key)
-            if cat_info and "parser_category" in cat_info:
-                active_categories.append(cat_info["parser_category"])
+        # 1. Extract unique active categories based on configuration filters
+        active_categories = sorted(list({
+            search_registry["categories"][tk]["parser_category"]
+            for tk in search_registry.get("active_pipeline_targets", [])
+            if tk in search_registry.get("categories", {})
+            and search_registry["categories"][tk].get("parser_category") in allowed_categories
+        }))
 
-        # 2. Fire the consolidation pipeline ONCE with the full list
-        if active_categories:
-            run_consolidation_pipeline(categories=active_categories)
+        agent_config = config.get("agent", {})
+        base_cache_file = agent_config.get("cache_output_file", "consolidated_bazaar_metrics.json")
 
-    # ==========================================
-    # PHASE 3: METRICS RECALCULATION
-    # ==========================================
-    if command in ["metrics", "all"]:
-        print("\n[📊] Triggering Dashboard Metrics Aggregation...")
-        unique_models = db.get_all_snapshot_models()
-        print(f"  ▪ Found {len(unique_models)} distinct components in your database.")
+        # Open dedicated Phase 2 standalone connection coordinates
+        conn = sqlite3.connect(db_name)
+        cursor = conn.cursor()
 
-        for model in unique_models:
-            if model != "UNKNOWN":
-                aggregator.calculate_historical_metrics(model, timeframe='past_month')
-                aggregator.calculate_historical_metrics(model, timeframe='past_year')
-        print("[+] Metrics calculations complete.")
+        # 2. Loop through each isolated hardware segment category
+        for cat in active_categories:
+            cat_specific_file = f"{cat}_{base_cache_file}"
+            print(f"  ▪ Isolating validation arrays for category [{cat}] -> Target: {cat_specific_file}")
 
-    if command not in ["harvest", "consolidate", "metrics", "all"]:
-        print_usage()
+            # 🌟 STEP A: Find every distinct model name belonging strictly to this category tier
+            cursor.execute("""
+                SELECT DISTINCT model_name
+                FROM market_snapshots
+                WHERE category = ? AND is_sold = 1
+            """, (cat,))
+
+            discovered_models = [row[0] for row in cursor.fetchall() if row[0] != "UNKNOWN"]
+
+            if not discovered_models:
+                print(f"    ⚠️ Warning: No valid historical snapshots found in DB for category [{cat}]")
+                continue
+
+            # 🌟 STEP B: Cascade calculate metrics for every isolated model name discovered
+            print(f"    🔄 Recalculating metrics for {len(discovered_models)} models...")
+            for model in discovered_models:
+                # Executes your internal aggregator queries and saves them straight to the DB table
+                aggregator.calculate_historical_metrics(model_name=model, timeframe='past_month')
+
+            # 🌟 STEP C: Pull down the freshly calculated dataset back out of historical_metrics
+            cursor.execute("""
+                SELECT model_name, timeframe, condition_type, total_units,
+                       min_item_price, max_item_price, avg_item_price,
+                       avg_shipping_cost, avg_total_cost, last_updated
+                FROM historical_metrics
+                WHERE model_name IN ({seq})
+            """.format(seq=','.join(['?'] * len(discovered_models))), discovered_models)
+
+            columns = [col[0] for col in cursor.description]
+            category_metrics_matrix = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+            # 🌟 STEP D: Lock the final matrix down to its dedicated dynamic JSON disk target
+            if category_metrics_matrix:
+                with open(cat_specific_file, "w") as f:
+                    json.dump(category_metrics_matrix, f, indent=4)
+                print(f"    ✅ Cleanly wrote isolated metrics matrix to {cat_specific_file} ({len(category_metrics_matrix)} rows)")
+            else:
+                print(f"    ⚠️ Warning: No metric records captured from table space for category [{cat}]")
+
+        # Close out resource dependencies
+        conn.close()
 
 if __name__ == "__main__":
     main()
