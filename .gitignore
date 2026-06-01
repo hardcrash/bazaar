@@ -17,6 +17,7 @@ __pycache__/
 *.db-journal
 *.db-wal
 consolidated_bazaar_metrics.json
+*_consolidated_bazaar_metrics.json
 
 # User Configurations & Environment Variables
 .env
