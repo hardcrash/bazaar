@@ -23,9 +23,10 @@ consolidated_bazaar_metrics.json
 .env
 .env.*
 config.yaml
+config_credentials.yaml
 
 # IDEs & System Files
 .vscode/
 .idea/
 .DS_Store
-credentials.yaml
+

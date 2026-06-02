@@ -27,7 +27,7 @@ def fetch_and_print_rate_limits():
     # Load settings exactly how your main script pulls them
     try:
         config = load_yaml("config.yaml")
-        creds = load_yaml("credentials.yaml")
+        creds = load_yaml("config_credentials.yaml")
         use_sandbox = config.get("use_sandbox", True)
         env_key = "sandbox" if use_sandbox else "production"
 

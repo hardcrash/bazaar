@@ -87,7 +87,7 @@ class ComponentParserRegistry:
     """
     Factory orchestrating configuration files and dynamically routing strategies.
     """
-    def __init__(self, config_json_path: str = "parser_config.json"):
+    def __init__(self, config_json_path: str = "config_parser.json"):
         import json
         with open(config_json_path, "r") as f:
             self.config_data = json.load(f)

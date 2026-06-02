@@ -31,7 +31,7 @@ def main():
 
     # Load Configurations
     config = load_yaml("config.yaml")
-    creds = load_yaml("credentials.yaml")
+    creds = load_yaml("config_credentials.yaml")
     db_name = config.get("database", {}).get("path", "bazaar.db")
 
     # Extract allowed categories from config.yaml directly
@@ -39,7 +39,7 @@ def main():
     allowed_categories = market_rules.get("allowed_categories", ["CPU", "Motherboard"])
 
     # Load search parameters & strategies layout file
-    with open("searches.json", "r") as f:
+    with open("config_searches.json", "r") as f:
         search_registry = json.load(f)
 
     db = DatabaseManager(db_name)
@@ -61,7 +61,7 @@ def main():
         )
 
         # Instantiating dynamic strategy engine mapper
-        parser_factory = ComponentParserRegistry("parser_config.json")
+        parser_factory = ComponentParserRegistry("config_parser.json")
 
         global_settings = search_registry.get("global_settings", {})
         MAX_ITEMS_PER_SWEEP = global_settings.get("max_items_per_sweep", 1000)

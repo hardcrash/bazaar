@@ -1,9 +1,9 @@
 ## ⚙️ Configuration & Secrets Setup
 
-Because your local keys and specific file adjustments are blocked by `.gitignore`, you must manually initialize `config.yaml` and `credentials.yaml` in the root of the directory tree before starting up the harvester engine.
+Because your local keys and specific file adjustments are blocked by `.gitignore`, you must manually initialize `config.yaml` and `config_credentials.yaml` in the root of the directory tree before starting up the harvester engine.
 
-### 1. API Keys (`credentials.yaml`)
-Create a file named `credentials.yaml` in the project root. This manages your secure OAuth connections to the marketplace endpoints. Populate it using the following structural keys, substituting your actual developer dashboard strings:
+### 1. API Keys (`config_credentials.yaml`)
+Create a file named `config_credentials.yaml` in the project root. This manages your secure OAuth connections to the marketplace endpoints. Populate it using the following structural keys, substituting your actual developer dashboard strings:
 
 ```yaml
 sandbox:
@@ -41,7 +41,7 @@ Rather than modifying application code, new hardware verticals, search targets, 
 
 The data pipeline operates across three isolgories or Search Targated processing layers:
 
-### 1. Ingestion Layer (`main.py` & `searches.json`)
+### 1. Ingestion Layer (`main.py` & `config_searches.json`)
 
 Responsible for:
 
@@ -76,7 +76,7 @@ Responsible for:
 
 Expanding your tracking footprint (for example, adding NVIDIA GPUs alongside AMD motherboards) requires only two configuration changes.
 
-## Step 1: Register the Target in `searches.json`
+## Step 1: Register the Target in `config_searches.json`
 
 Add the new target to `active_pipeline_targets` and define its search profile in the `categories` section.
 
@@ -96,7 +96,7 @@ Add the new target to `active_pipeline_targets` and define its search profile in
 }
 ```
 
-## Step 2: Define the Parsing Matrix in `parser_config.json`
+## Step 2: Define the Parsing Matrix in `config_parser.json`
 
 Create the parsing configuration for the corresponding `parser_category`.
 
@@ -154,10 +154,10 @@ If listings are falling into the `UNKNOWN` bucket or specific models are not bei
 
 Instead:
 
-1. Open `parser_config.json`.
+1. Open `config_parser.json`.
 2. Locate the appropriate category definition.
 3. Update the regular expressions contained in the `patterns` array.
 4. Adjust brand aliases, token boundaries, or noise-word exclusions as needed.
-5. Open `searches.json` and refine the outbound search keywords dispatched to platform adapters.
+5. Open `config_searches.json` and refine the outbound search keywords dispatched to platform adapters.
 
 Because classification behavior is configuration-driven, most tuning and expansion tasks can be completed without touching the runtime engine.

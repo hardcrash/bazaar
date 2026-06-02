@@ -29,7 +29,7 @@ def run_consolidation_pipeline(categories: list = ["Motherboard", "CPU"]):
         return False
 
     # Initialize dynamic strategy parser registry
-    parser_registry = ComponentParserRegistry("parser_config.json")
+    parser_registry = ComponentParserRegistry("config_parser.json")
 
     # Load all strategies up front
     strategies = {}
