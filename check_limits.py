@@ -1,7 +1,7 @@
-# check_limits.py
 import requests
 import json
-from src.util.config_loader import load_yaml
+# 🌟 Import your unified config loader class
+from src.util.config_loader import AppConfig
 
 def get_oauth_token(client_id, client_secret, is_sandbox):
     """Fetches a temporary application access token to query developer metrics."""
@@ -13,7 +13,7 @@ def get_oauth_token(client_id, client_secret, is_sandbox):
     }
     data = {
         "grant_type": "client_credentials",
-        "scope": "https://api.ebay.com/oauth/api_scope"  # Scopes required for analytics querying
+        "scope": "https://api.ebay.com/oauth/api_scope"  # Required scope for developer analytics
     }
 
     response = requests.post(url, headers=headers, data=data, auth=(client_id, client_secret))
@@ -24,15 +24,21 @@ def get_oauth_token(client_id, client_secret, is_sandbox):
 def fetch_and_print_rate_limits():
     print("🕵️‍♂️ Initializing eBay Quota & Rate Limit Inspection...")
 
-    # Load settings exactly how your main script pulls them
+    # 🌟 Initialize your unified configuration object
     try:
-        config = load_yaml("config.yaml")
-        creds = load_yaml("config_credentials.yaml")
-        use_sandbox = config.get("use_sandbox", True)
-        env_key = "sandbox" if use_sandbox else "production"
+        config = AppConfig(settings_dir="settings")
+        use_sandbox = config.params.get("use_sandbox", True)
 
-        client_id = creds[env_key]["client_id"]
-        client_secret = creds[env_key]["client_secret"]
+        # Match your exact structural layout
+        env_key = "ebay_sandbox" if use_sandbox else "ebay_production"
+        creds = config.params.get(env_key, {})
+
+        client_id = creds.get("client_id")
+        client_secret = creds.get("client_secret")
+
+        if not client_id or not client_secret:
+            raise ValueError(f"Extracted client credentials are None for key: {env_key}")
+
     except Exception as e:
         print(f"❌ Configuration error loading your secret keysets: {e}")
         return
@@ -40,6 +46,7 @@ def fetch_and_print_rate_limits():
     # Authenticate
     try:
         token = get_oauth_token(client_id, client_secret, use_sandbox)
+        print("[✅] Secured internal developer token successfully.")
     except Exception as e:
         print(f"❌ Failed to authorize against eBay Authentication servers: {e}")
         return
@@ -59,8 +66,14 @@ def fetch_and_print_rate_limits():
         "api_name": "browse"
     }
 
-    print(f"📡 Querying metadata limits from environment: [{env_key.upper()}]...")
-    response = requests.get(analytics_url, headers=headers, params=params)
+    readable_env = "Production" if not use_sandbox else "Sandbox"
+    print(f"📡 Querying metadata limits from environment: [{readable_env.upper()}]...")
+
+    try:
+        response = requests.get(analytics_url, headers=headers, params=params, timeout=10)
+    except Exception as e:
+        print(f"❌ Network timeout connecting to eBay analytics infrastructure: {e}")
+        return
 
     if response.status_code != 200:
         print(f"❌ eBay Analytics endpoint rejected request (Status {response.status_code}):")
@@ -80,9 +93,9 @@ def fetch_and_print_rate_limits():
     print("=======================================================")
 
     for limit_block in rate_limits:
-        context = limit_block.get("apiContext")
-        api = limit_block.get("apiName")
-        version = limit_block.get("apiVersion")
+        context = limit_block.get("apiContext", "UNKNOWN")
+        api = limit_block.get("apiName", "UNKNOWN")
+        version = limit_block.get("apiVersion", "v1")
 
         print(f"\n📂 API Target: {context.upper()} -> {api.upper()} ({version})")
         print("-" * 55)

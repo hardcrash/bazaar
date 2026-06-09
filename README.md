@@ -161,3 +161,19 @@ Instead:
 5. Open `config_searches.json` and refine the outbound search keywords dispatched to platform adapters.
 
 Because classification behavior is configuration-driven, most tuning and expansion tasks can be completed without touching the runtime engine.
+
+                         ┌─────────────────────────┐
+                         │   AnalysisController    │
+                         └────────────┬────────────┘
+                                      │
+             ┌────────────────────────┴────────────────────────┐
+             ▼                                                 ▼
+┌─────────────────────────┐                       ┌─────────────────────────┐
+│   Live Active Cycle     │                       │    Historical Cycle     │
+├─────────────────────────┤                       ├─────────────────────────┤
+│ • Endpoint: Browse API  │                       │ • Endpoint: Marketplace │
+│ • Target: Current Bids  │                       │   Insights API          │
+│ • State: Open / Active  │                       │ • Target: Past Year     │
+│ • Intent: Sniping Deals │                       │ • State: Completed/Sold │
+│                         │                       │ • Intent: Fair Value    │
+└─────────────────────────┘                       └─────────────────────────┘

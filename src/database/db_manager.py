@@ -1,90 +1,32 @@
 import sqlite3
+import os
+import json
 
 class DatabaseManager:
-    def __init__(self, db_path="bazaar.db"):
-        self.db_path = db_path
+    def __init__(self, config):
+        self.db_path = config.params.get("database", {}).get("path", "bazaar.db")
+        self.settings_dir = config.settings_dir
+        self.queries = config.queries
         self.init_db()
 
     def init_db(self):
-        """Initializes tables supporting broad market discovery and distinct timeframes."""
+        schema_path = os.path.join(self.settings_dir, "schema.sql")
+        with open(schema_path, "r") as f:
+            schema_sql = f.read()
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
+            conn.executescript(schema_sql)
 
-            # 1. Target Watchlist (Now acts as a helper table for UI highlighted targets)
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS target_models (
-                    model_name TEXT PRIMARY KEY,
-                    category TEXT,
-                    platform TEXT,
-                    target_purchase REAL,
-                    target_resell REAL,
-                    common_failure TEXT
-                )
-            ''')
+    def insert_harvested_item(self, market_item_obj):
+        """Accepts a MarketItem object, flattens non-primitive types, and saves to DB."""
+        query = self.queries.get("insert_harvested_item")
 
-            # 2. Market Snapshots (Loosened constraints to allow unlisted/discovered models)
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS market_snapshots (
-                    item_id TEXT PRIMARY KEY,
-                    model_name TEXT,         -- Filled programmatically by Regex parser
-                    category TEXT,           -- 'CPU' or 'Motherboard'
-                    title TEXT,
-                    price REAL,
-                    shipping_cost REAL,
-                    currency TEXT,
-                    condition_id INTEGER,    -- 3000 (Working), 7000 (Broken)
-                    is_sold BOOLEAN,         -- Allows us to separate active vs historical solds
-                    date_listed TIMESTAMP,   -- When the item was actually sold/listed
-                    date_fetched TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
+        # Turn the dataclass or object properties into a flat dictionary
+        data = market_item_obj.__dict__.copy()
 
-            # 3. Historical Metrics Table
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS historical_metrics (
-                    model_name TEXT,
-                    timeframe TEXT,          -- 'past_month' or 'past_year'
-                    condition_type TEXT,     -- 'broken' or 'working'
-                    total_units INTEGER,
-                    min_item_price REAL,
-                    max_item_price REAL,
-                    avg_item_price REAL,
-                    avg_shipping_cost REAL,
-                    avg_total_cost REAL,
-                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (model_name, timeframe, condition_type)
-                )
-            ''')
+        # 🌟 CRITICAL: Safely convert list to a comma-separated string for SQLite TEXT column
+        if isinstance(data.get("buying_options"), list):
+            data["buying_options"] = ", ".join(data["buying_options"])
 
-            # 🚀 NEW: SPEED INDEXES FOR LARGE DATASETS
-            # Index 1: Speeds up the Curator checking if a model name is known
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_snapshots_model
-                ON market_snapshots(model_name)
-            ''')
-
-            # Index 2: Speeds up the Aggregator looking back at a specific condition + timeframe
-            cursor.execute('''
-                CREATE INDEX IF NOT EXISTS idx_snapshots_aggregation
-                ON market_snapshots(model_name, condition_id, date_fetched)
-            ''')
-
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(query, data)
             conn.commit()
-
-    def insert_snapshot(self, item_id, model_name, category, title, price, shipping_cost, currency, condition_id, is_sold, date_listed=None):
-        """Inserts any identified component into raw snapshots."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT OR REPLACE INTO market_snapshots
-                (item_id, model_name, category, title, price, shipping_cost, currency, condition_id, is_sold, date_listed)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (item_id, model_name, category, title, price, shipping_cost, currency, condition_id, is_sold, date_listed))
-            conn.commit()
-
-    def get_all_snapshot_models(self):
-        """Fetches all unique models currently discovered in your database to loop aggregations."""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT model_name FROM market_snapshots WHERE model_name IS NOT NULL")
-            return [row[0] for row in cursor.fetchall()]

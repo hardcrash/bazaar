@@ -1,0 +1,67 @@
+# config/categories.yaml
+
+CPU:
+  strategy_class: "CpuStrategy"
+
+  # 🌟 Live Sourcing Queries: Targeted defect-first hunting terms
+  defect_queries: [
+    "AM4 bent",
+    "AM4 bent pins",
+    "AM4 broken pins",
+    "Ryzen bent pins"
+  ]
+
+  # 🌟 Valuation Baseline Queries: Specific high-value 5000-series AM4 chips
+  valid_models: [
+    "5800X"
+  ]
+
+  # 🌟 Multi-Sku Matrix Pool: Models to check for cross-bleed dropdown listings
+  multisku_models: [
+    "5600X", "5700X", "5700X3D", "5800X", "5800X3D", "5900X", "5950X"
+  ]
+
+  brands: ["AMD"]
+
+  search_format: "Ryzen {model}"
+
+  # Keeps regex focused solely on capturing Zen 3 (5000 series) variants
+  patterns: ["RYZEN(?:\\s+[579])?\\s+(5\\d{3}(?:X3D|X|G|GE|XT)?)\\b"]
+
+  noise_words: ["DDR4", "DDR5", "CPU", "SOCKET"]
+
+  # Native eBay API exclusion filters compiled at runtime (Keeps keyword count under 15)
+  blacklist_words: [
+    "BUNDLE", "LAPTOP", "PC", "BAREBONES", "SYSTEM", "OPTANE", "P4800X", "P5800X", "METER", "RADIO"
+  ]
+
+  # Local Engine Noise Level: Checked in code memory via title parsing loops
+  local_noise_blacklist: [
+    "SAW", "BLADE", "HSS", "TOOL", "STEEL", "MACHINERY", "WAVE",
+    "ROCKFORD", "FOSGATE", "AMPLIFIER", "AMP", "COMBO", "MOBO", "KIT",
+    "SUPPORT", "FOR", "COMPATIBLE", "ASUS", "MSI", "GIGABYTE", "ASROCK",
+    "DIXIE", "MA5800", "YAMAYO", "JOINT", "MOOG", "VVG", "DELL"
+  ]
+
+  # definitions for each sub-search category
+  active_harvest:
+    enabled: true
+    limit_per_sweep: 200
+    min_price: 50
+    max_price: 250
+    step_size: 10.0
+    ebay_category_id: 164
+    ebay_condition: [7000]
+
+historical_harvest:
+    enabled: true
+    lookback_days: 365
+    limit_per_sweep: 2000
+    require_sold: true
+    step_size: 10.0          # 🌟 Modularity Win: Categorical step increments managed here
+    min_price_broken: 50
+    max_price_broken: 250
+    min_price_used: 115
+    max_price_used: 120
+    ebay_category_id: 164
+    ebay_condition: [2000, 3000, 7000]
