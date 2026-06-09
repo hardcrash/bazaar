@@ -42,7 +42,10 @@ CREATE TABLE IF NOT EXISTS harvested_market_items (
     -- Assets & State Routines
     image_url TEXT,
     item_url TEXT,
-    process_state TEXT
+    process_state TEXT,
+
+    -- AI agent parameters
+    is_parsed_by_agent: BOOLEAN DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS analyzed_market_items (
@@ -88,7 +91,10 @@ CREATE TABLE IF NOT EXISTS analyzed_market_items (
     -- Assets & State Routines
     image_url TEXT,
     item_url TEXT,
-    process_state TEXT
+    process_state TEXT,
+
+    -- AI agent parameters
+    is_parsed_by_agent: BOOLEAN DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS historical_metrics (
     model_name TEXT,

@@ -52,3 +52,6 @@ class MarketItem:
     image_url: Optional[str] = None
     item_url: Optional[str] = None
     process_state: Optional[str] = None         # e.g., 'UNPROCESSED', 'PENDING_DEEP_HARVEST', 'PROCESSED'
+
+    # AI agent parameters
+    is_parsed_by_agent: 0

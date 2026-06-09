@@ -1,3 +1,5 @@
+# src/database/db_manager.py
+
 import sqlite3
 import os
 import json

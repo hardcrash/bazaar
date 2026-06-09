@@ -1,179 +1,182 @@
-## ⚙️ Configuration & Secrets Setup
+# Bazaar Engine README.md
 
-Because your local keys and specific file adjustments are blocked by `.gitignore`, you must manually initialize `config.yaml` and `config_credentials.yaml` in the root of the directory tree before starting up the harvester engine.
+## ⚙️ Configuration & Secrets
 
-### 1. API Keys (`config_credentials.yaml`)
-Create a file named `config_credentials.yaml` in the project root. This manages your secure OAuth connections to the marketplace endpoints. Populate it using the following structural keys, substituting your actual developer dashboard strings:
+Secrets and runtime configurations are managed via YAML files in the root directory and the settings/ folder.
 
-```yaml
+### 1. Secrets (config_credentials.yaml)
+
+Manage your API/OAuth connections here:
+
 sandbox:
-  client_id: "YOUR_SANDBOX_CLIENT_ID"
-  client_secret: "YOUR_SANDBOX_CLIENT_SECRET"
+client_id: "YOUR_SANDBOX_CLIENT_ID"
+client_secret: "YOUR_SANDBOX_CLIENT_SECRET"
 
 production:
-  client_id: "YOUR_PRODUCTION_CLIENT_ID"
-  client_secret: "YOUR_PRODUCTION_CLIENT_SECRET"
-```  
+client_id: "YOUR_PRODUCTION_CLIENT_ID"
+client_secret: "YOUR_PRODUCTION_CLIENT_SECRET"
 
-### 2. API Keys config.yaml:
+### 2. Runtime Settings (config.yaml)
 
-```yaml
+Define your runtime parameters here:
+
 use_sandbox: false
 database:
-  path: "bazaar.db"
-
-agent:
-  api_url: "http://localhost:11434/v1/chat/completions"
-  model_name: "Qwen_Qwen3.5-4B-Q4_K_M.gguf"
-  cache_output_file: "consolidated_bazaar_metrics.json"
-```
-
-
-# 🏗️ Architecture & Extensibility Guide
-
-The Bazaar Engine uses a configuration-driven, polymorphic **Strategy Pattern** to handle data ingestion and hardware item classification. This decouples platform integrations and text-parsing algorithms from the core runtime engine.
-
-Rather than modifying application code, new hardware verticals, search targets, and classification rules can be added entirely through configuration files.
+path: "bazaar.db"
 
 ---
 
-## 🧩 System Architecture Flow
+## 🏗️ Architecture Overview
 
-The data pipeline operates across three isolgories or Search Targated processing layers:
+The engine is structured as a modular package, separating cross-platform data acquisition from business logic.
 
-### 1. Ingestion Layer (`main.py` & `config_searches.json`)
+### Core Modules
 
-Responsible for:
-
-* Reading active target definitions
-* Orchestrating platform execution bounds
-* Managing network paging loops
-* Passing discovered raw items to the Curator gatekeeper
-
-### 2. Filtering Gatekeeper (`src/analysis/curator.py`)
-
-Responsible for:
-
-* Sanitizing inbound payloads
-* Filtering invalid or low-quality listings (e.g., box-only listings)
-* Screening extreme pricing outliers
-* Updating the local SQLite workspace
-
-### 3. Strategy Classification Layer (`src/analysis/parser.py`)
-
-Responsible for:
-
-* Resolving target strings through dynamic parser selection
-* Executing polymorphic parsing strategies such as:
-
-  * `RegexChipsetStrategy`
-  * `RegexLookaheadStrategy`
-* Applying classification matrices defined in JSON configuration layers
+* src/api/: The Data Acquisition Layer. Contains ebay_client.py (Official API) and ebay_scrape_client.py (Historical/Fallback scraper).
+* src/analysis/: The Classification Layer. Uses a Strategy Pattern to apply specific parsing rules via analysis_strategy_factory.py.
+* src/pipeline/: The ETL Engine. Handles the ingestion and historical aggregation flows.
+* src/database/: The Persistence Layer. Uses SQLAlchemy to manage the lifecycle of market items.
+* settings/: The Knowledge Base. Defines categorical hierarchies, parsing policies, and SQL schemas.
 
 ---
 
-# 🚀 Adding New Categories or Search Targets
+## 🚀 Adding New Hardware Targets
 
-Expanding your tracking footprint (for example, adding NVIDIA GPUs alongside AMD motherboards) requires only two configuration changes.
+Target definition is handled within the settings/ directory:
 
-## Step 1: Register the Target in `config_searches.json`
-
-Add the new target to `active_pipeline_targets` and define its search profile in the `categories` section.
-
-```json
-{
-  "active_pipeline_targets": [
-    "motherboards_b650",
-    "gpus_nvidia_rtx"
-  ],
-  "categories": {
-    "gpus_nvidia_rtx": {
-      "base_query": "NVIDIA RTX Graphics Card",
-      "parser_category": "GraphicsCard",
-      "parsing_strategy": "RegexChipsetStrategy"
-    }
-  }
-}
-```
-
-## Step 2: Define the Parsing Matrix in `config_parser.json`
-
-Create the parsing configuration for the corresponding `parser_category`.
-
-```json
-{
-  "categories": {
-    "GraphicsCard": {
-      "strategy_class": "RegexChipsetStrategy",
-      "config": {
-        "brands": [
-          "ASUS",
-          "MSI",
-          "GIGABYTE",
-          "EVGA",
-          "ZOTAC",
-          "FOUNDERS"
-        ],
-        "patterns": [
-          "\\b(RTX\\s?\\d{4}0\\s?(?:TI|SUPER)?|GTX\\s?\\d{3,4})\\b"
-        ],
-        "noise_words": [
-          "NVIDIA",
-          "GRAPHICS",
-          "CARD",
-          "GPU",
-          "VIDEO",
-          "PCI",
-          "VRAM"
-        ]
-      }
-    }
-  }
-}
-```
+1. Define Category: Update settings/categories.yaml to register your new hardware vertical.
+2. Define Policy: Adjust settings/policies.yaml to set price thresholds or noise-word exclusions.
+3. Implement Strategy: If the hardware requires unique parsing, add a new strategy class in src/analysis/strategy/ and register it in analysis_strategy_factory.py.
 
 ---
 
-## ✅ Activation
+## 🛠️ Pipeline Execution
 
-Once both configuration files have been updated, the new category is fully integrated.
+The engine splits tasks between live market monitoring and historical analysis:
 
-Start a harvest run with:
+* Live Cycle (src/api/ebay/ebay_client.py): Connects to the official eBay Browse API for real-time monitoring.
+* Historical Cycle (src/api/ebay/ebay_scrape_client.py): Uses the scrape client for backfilling data.
 
-```bash
+### Running the Engine
+
+Execute your harvest and analysis loops:
+
 python main.py harvest
-```
+
+python check_db.py
 
 ---
 
-# 🛠️ Modifying Existing Search Heuristics
+## ✅ Development & Testing
 
-If listings are falling into the `UNKNOWN` bucket or specific models are not being recognized:
+Your test/ directory is aligned with your package structure. Run your pre-flight checks in Dev Mode:
 
-### Do **not** modify Python source code.
 
-Instead:
 
-1. Open `config_parser.json`.
-2. Locate the appropriate category definition.
-3. Update the regular expressions contained in the `patterns` array.
-4. Adjust brand aliases, token boundaries, or noise-word exclusions as needed.
-5. Open `config_searches.json` and refine the outbound search keywords dispatched to platform adapters.
+Here is the project structure for `bazaar-data` in Markdown format:
 
-Because classification behavior is configuration-driven, most tuning and expansion tasks can be completed without touching the runtime engine.
+### Project Directory Structure
 
-                         ┌─────────────────────────┐
-                         │   AnalysisController    │
-                         └────────────┬────────────┘
-                                      │
-             ┌────────────────────────┴────────────────────────┐
-             ▼                                                 ▼
-┌─────────────────────────┐                       ┌─────────────────────────┐
-│   Live Active Cycle     │                       │    Historical Cycle     │
-├─────────────────────────┤                       ├─────────────────────────┤
-│ • Endpoint: Browse API  │                       │ • Endpoint: Marketplace │
-│ • Target: Current Bids  │                       │   Insights API          │
-│ • State: Open / Active  │                       │ • Target: Past Year     │
-│ • Intent: Sniping Deals │                       │ • State: Completed/Sold │
-│                         │                       │ • Intent: Fair Value    │
-└─────────────────────────┘                       └─────────────────────────┘
+.
+├── bazaar.db
+├── check_db.py
+├── check_limits.py
+├── config_credentials.yaml
+├── config.yaml
+├── CPU_consolidated_bazaar_metrics.json
+├── main.py
+├── Motherboard_High_consolidated_bazaar_metrics.json
+├── Motherboard_Mid_consolidated_bazaar_metrics.json
+├── README.md
+├── requirements.txt
+├── settings/
+│   ├── categories.yaml
+│   ├── policies.yaml
+│   ├── queries.sql
+│   └── schema.sql
+├── src/
+│   ├── analysis/
+│   │   ├── analysis_controller.py
+│   │   ├── **init**.py
+│   │   ├── strategy/
+│   │   │   ├── analysis_strategy_factory.py
+│   │   │   ├── base_strategy.py
+│   │   │   ├── cpu_strategy.py
+│   │   │   ├── **init**.py
+│   │   │   └── motherboard_strategy.py
+│   │   └── transformer.py
+│   ├── api/
+│   │   ├── ebay/
+│   │   │   ├── ebay_client.py
+│   │   │   ├── ebay_scrape_client.py
+│   │   │   └── **init**.py
+│   │   ├── **init**.py
+│   │   ├── jawa/
+│   │   └── mercari/
+│   ├── core/
+│   │   └── models.py
+│   ├── database/
+│   │   ├── db_manager.py
+│   │   └── **init**.py
+│   ├── **init**.py
+│   ├── pipeline/
+│   │   ├── historical_harvester.py
+│   │   └── **init**.py
+│   ├── ui/
+│   │   ├── dialogs/
+│   │   │   └── **init**.py
+│   │   ├── **init**.py
+│   │   ├── main_window.py
+│   │   ├── main_window.ui
+│   │   ├── ui_main_window.py
+│   │   └── widgets/
+│   │       └── **init**.py
+│   └── util/
+│       ├── config_loader.py
+│       ├── **init**.py
+│       └── price_indexer.py
+└── test/
+├── conftest.py
+├── test_config_integrity.py
+├── test_cpu_strategy.py
+├── test_ebay_scrape_client.py
+├── test_regex_robustness.py
+├── test_sanitation.py
+└── test_scrape_resiliency.py
+
+---
+
+*Note: `__pycache__` and `.venv` directories have been omitted for clarity.*
+
+                       ┌─────────────────────────┐
+                       │   AnalysisController    │
+                       └────────────┬────────────┘
+                                    │
+                ┌───────────────────┴───────────────────┐
+                │                                       │
+      ┌─────────▼───────────────┐          ┌────────────▼──────────────┐
+      │  Live Active Cycle      │          │    Historical Cycle       │
+      ├─────────────────────────┤          ├───────────────────────────┤
+      │ • Source: eBay API      │          │ • Source: Scrape Client   │
+      │ • Scope: Open Listings  │          │ • Scope: Past Sold Data   │
+      │ • Intent: Price Sniping │          │ • Intent: Indexing Values │
+      └─────────┬───────────────┘          └────────────┬──────────────┘
+                │                                       │
+                └───────────┬───────────────────────────┘
+                            ▼
+              ┌───────────────────────────┐
+              │  Transformer / Sanitizer  │
+              │ (src/analysis/transformer)│
+              └─────────────┬─────────────┘
+                            │
+              ┌─────────────▼─────────────┐
+              │   Strategy Classification │
+              │ (src/analysis/strategy/..)│
+              └─────────────┬─────────────┘
+                            │
+              ┌─────────────▼─────────────┐
+              │    Database Persistence   │
+              │ (src/database/db_manager) │
+              └───────────────────────────┘
+
+pytest test/
