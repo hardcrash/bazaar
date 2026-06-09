@@ -54,4 +54,4 @@ class MarketItem:
     process_state: Optional[str] = None         # e.g., 'UNPROCESSED', 'PENDING_DEEP_HARVEST', 'PROCESSED'
 
     # AI agent parameters
-    is_parsed_by_agent: 0
+    is_parsed_by_agent: bool = False

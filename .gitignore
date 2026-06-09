@@ -30,3 +30,8 @@ config_credentials.yaml
 .idea/
 .DS_Store
 
+# Editor Swap Files
+*.swp
+*.swo
+*.*.swp
+
