@@ -1,23 +1,26 @@
+# src/api/ebay/ebay_scrape_client.py
+
 import requests
 import logging
-from bs4 import BeautifulSoup
-from typing import List, Optional
-import urllib.parse
 import time
 import random
 import re
-import json
-from copy import deepcopy
+import yaml
+import os
+import urllib.parse
+from bs4 import BeautifulSoup
+from typing import List, Optional
 from src.core.models import MarketItem
-from src.analysis.strategy.cpu_strategy import CPUStrategy
+from src.analysis.strategy.cpu_strategy import BaseCPUStrategy
 
 logger = logging.getLogger("BazaarPipeline")
 
 class EbayScrapeClient:
-    def __init__(self, config):
+    def __init__(self, config, min_wait: float = 2.0, max_wait: float = 5.0):
         self.config = config
-        import os
-        import yaml
+        self.min_wait = min_wait
+        self.max_wait = max_wait
+        self.last_request_time = 0.0
 
         global_cfg = {}
         if hasattr(config, 'params') and isinstance(config.params, dict):
@@ -43,29 +46,31 @@ class EbayScrapeClient:
         self.scraperapi_key = str(global_cfg.get("scraperapi_key", "")).strip()
         self.timeout = int(global_cfg.get("api_timeout_seconds", 20))
 
-        print("\n=== 🛠️ PIPELINE PROXY CONFIG DEBUG ===")
-        print(f" Detected Provider : {self.provider.upper()}")
-        print(f" ScrapeOps Key     : {self.scrapeops_key[:5] + '...' if len(self.scrapeops_key) > 5 else '❌ MISSING'}")
-        print(f" ScraperAPI Key    : {self.scraperapi_key[:5] + '...' if len(self.scraperapi_key) > 5 else '❌ MISSING'}")
-        print("=======================================\n")
+    def _enforce_politeness(self):
+        """Ensures a minimum gap between requests with random jitter to prevent detection."""
+        elapsed = time.perf_counter() - self.last_request_time
+        if elapsed < self.min_wait:
+            jitter = random.uniform(0, self.max_wait - self.min_wait)
+            sleep_time = (self.min_wait - elapsed) + jitter
+            time.sleep(sleep_time)
+        self.last_request_time = time.perf_counter()
 
-    def search_historical_sales(self, query: str, min_price: float, max_price: float, category_id: str, model_name: str, strategy: CPUStrategy) -> List[MarketItem]:
+    def search_historical_sales(self, query: str, min_price: float, max_price: float, category_id: str, model_name: str, strategy: BaseCPUStrategy) -> List[MarketItem]:
+        self._enforce_politeness()
+
         cleaned_query = " ".join(query.split())
         encoded_query = requests.utils.quote(cleaned_query)
 
         target_ebay_url = f"https://www.ebay.com/sch/i.html?_nkw={encoded_query}&LH_Sold=1&LH_Complete=1&_ipg=100&_sop=13"
         if category_id and str(category_id).lower() != "global root":
             target_ebay_url += f"&_sacat={category_id}"
-
         target_ebay_url += f"&_udlo={min_price}&_udhi={max_price}"
 
         if self.provider == "scraperapi":
             gateway_url = "http://api.scraperapi.com"
-            cache_buster_url = f"{target_ebay_url}&cb={int(time.time() * 1000)}{random.randint(100,999)}"
-
             payload = {
                 "api_key": self.scraperapi_key,
-                "url": cache_buster_url,
+                "url": f"{target_ebay_url}&cb={int(time.time() * 1000)}",
                 "keep_headers": "false",
                 "render": "true",
                 "skip_cache": "true",
@@ -73,121 +78,95 @@ class EbayScrapeClient:
             }
         else:
             gateway_url = "https://proxy.scrapeops.io/v1/"
-            safe_target_url = urllib.parse.quote_plus(target_ebay_url)
-
             payload = {
                 "api_key": self.scrapeops_key,
-                "url": safe_target_url,
+                "url": urllib.parse.quote_plus(target_ebay_url),
                 "bypass": "cloudflare_imperva",
                 "render_js": "true",
                 "residential": "true",
                 "wait_for_selector": ".s-card--horizontal"
             }
+
         try:
-            token_preview = self.scraperapi_key[:6] if self.provider == "scraperapi" else self.scrapeops_key[:6]
-            print(f"[🕷️] Dispatching sweep via [{self.provider.upper()}] | Token: {token_preview}...")
-
-            if self.provider == "scraperapi":
-                payload["keep_headers"] = "false"
-
             response = requests.get(gateway_url, params=payload, timeout=self.timeout)
-
             if response.status_code == 200:
-                return self._parse_ebay_html(
-                    html_content=response.text,
-                    model_name=model_name,
-                    category=category_id,
-                    is_sold=True,
-                    strategy=strategy
-                )
-            else:
-                print(f"  ❌ Proxy failure token block. Status code: {response.status_code}")
-                return []
-
+                return self._parse_ebay_html(response.text, model_name, category_id, True, strategy)
+            return []
         except Exception as e:
-            print(f"[❌] Exception triggered during execution pipeline loop: {e}")
+            print(f"[❌] Exception during execution pipeline: {e}")
             return []
 
-    def _parse_ebay_html(self, html_content: str, model_name: str, category: str, is_sold: bool, strategy: CPUStrategy) -> List[MarketItem]:
+    def _parse_ebay_html(self, html_content: str, model_name: str, category: str, is_sold: bool, strategy: BaseCPUStrategy) -> List[MarketItem]:
         soup = BeautifulSoup(html_content, "html.parser")
         item_summaries = []
 
-        page_text = soup.get_text()
-        if any(x in page_text.lower() for x in ["please verify you are a human", "security check", "robot"]):
-            print("  ⚠️  [BLOCK] Warning: Proxy exit node hit an eBay verification wall page.")
-            return []
-
         listings = soup.find_all(lambda tag: tag.name in ['li', 'div'] and tag.has_attr('class') and any(
-            cls in tag.get('class', []) for cls in ['s-item', 's-card--horizontal', 'srp-results__item', 's-item__wrapper']
+            cls in tag.get('class', []) for cls in ['s-item', 's-card--horizontal']
         ))
 
-        for idx, listing in enumerate(listings):
-            if any(cls in listing.get("class", []) for cls in ["s-item__pl-on-bottom", "s-item-placeholder"]):
-                continue
-
-            title_ele = listing.find(class_=lambda c: c and any(x in c for x in ["s-item__title", "card__title", "item__title"])) or \
-                        listing.find("h3") or \
-                        listing.find("span", role="heading")
-
-            if not title_ele:
-                continue
+        for listing in listings:
+            title_ele = listing.find(class_=lambda c: c and any(x in c for x in ["s-item__title", "card__title"]))
+            if not title_ele: continue
 
             raw_title = title_ele.text.strip()
             title_clean = strategy.clean_title(raw_title)
 
-            if "Shop on eBay" in title_clean or not title_clean:
-                continue
-
             status = strategy.is_valid(title_clean, target_model=model_name)
-
             if status == "INVALID":
-                print(f"     [Parser Drop #{idx}] Strategy Rejected -> '{title_clean}'")
                 continue
 
-            price_ele = listing.find(class_=lambda c: c and any(x in c for x in ["s-item__price", "card__price", "item__price"])) or \
-                        listing.find("span", class_="s-item__price")
+            price_ele = listing.find(class_=lambda c: c and any(x in c for x in ["s-item__price", "card__price"]))
+            if not price_ele: continue
 
-            if not price_ele:
-                continue
-
-            raw_price_text = price_ele.text.strip()
-            price_str = "".join(c for c in raw_price_text if c.isdigit() or c == ".")
-            if "to" in price_str.lower():
-                price_str = price_str.lower().split("to")[0].strip()
-
+            price_str = "".join(c for c in price_ele.text.strip() if c.isdigit() or c == ".")
             try:
-                price_val = float(price_str) if price_str else 0.0
-            except ValueError:
-                continue
+                price_val = float(price_str)
+            except ValueError: continue
 
-            if price_val == 0.0:
-                continue
+            item_url = listing.find("a", href=True)["href"] if listing.find("a", href=True) else None
+            item_id = item_url.split("/itm/")[-1].split("?")[0] if item_url and "/itm/" in item_url else "0"
 
-            id_ele = listing.find("a", class_=lambda c: c and any(x in c for x in ["s-item__link", "card__link"])) or \
-                     listing.find("a", href=True)
-            item_url = id_ele["href"] if (id_ele and id_ele.has_attr("href")) else None
+            # SUCCESS: Added missing required fields: shipping_cost, currency, condition_id
+            item_summaries.append(MarketItem(
+                item_id=item_id,
+                model_name=model_name,
+                category=category,
+                raw_title=raw_title,
+                title=title_clean,
+                price=price_val,
+                shipping_cost=0.0,              # Required
+                total_cost=price_val,
+                currency="USD",                 # Required
+                condition_id=3000,              # Required
+                is_sold=is_sold,
+                source_platform="ebay",
+                item_url=item_url,
+                process_state="PENDING_DEEP_HARVEST" if status == "MSKU" else "PENDING"
+            ))
 
-            item_id = "0"
-            if item_url and "/itm/" in item_url:
-                item_id = item_url.split("/itm/")[-1].split("?")[0]
+            print(f"    [Parser Accept] Strategy Verified MarketItem: '{title_clean}' | ${price_val}")
 
-            if status == "MSKU":
-                current_state = "PENDING_DEEP_HARVEST"
-                print(f"     [Parser Flag] Found Multi-Variation Menu -> '{title_clean}' | Tagged: {current_state}")
-            else:
-                current_state = "PENDING"
-                print(f"     [Parser Accept] Strategy Verified MarketItem: '{title_clean}' | ${price_val}")
-
-            market_item = MarketItem(
-                item_id=item_id, model_name=model_name, category=category,
-                raw_title=raw_title, title=title_clean, price=price_val,
-                shipping_cost=0.0, total_cost=price_val, currency="USD",
-                condition_id=3000, is_sold=is_sold, source_platform="ebay",
-                item_url=item_url, process_state=current_state
-            )
-            item_summaries.append(market_item)
-
+        print(f"[✅] Parser found {len(item_summaries)} items for {model_name}")
         return item_summaries
+
+    def fetch_raw_item_page(self, item_url: str, max_retries: int = 3) -> str:
+        self._enforce_politeness()
+        payload = {"api_key": self.scraperapi_key, "url": item_url}
+
+        for attempt in range(max_retries):
+            try:
+                response = requests.get("https://api.scraperapi.com/", params=payload, timeout=30)
+                if response.status_code == 200:
+                    return response.text
+                else:
+                    logger.warning(f"Attempt {attempt+1} failed with status {response.status_code}")
+            except Exception as e:
+                logger.error(f"Attempt {attempt+1} triggered exception: {e}")
+
+            # Wait a bit before retrying
+            time.sleep(1)
+
+        return ""
 
     def parse_msku_item_page(self, html_content: str, base_item) -> list:
         extracted_variants = []
@@ -214,21 +193,3 @@ class EbayScrapeClient:
         start_idx = start_match.end() - 1
         bracket_count = 0
         json_str = ""
-
-    def fetch_raw_item_page(self, item_url: str) -> str:
-        payload = {
-            "api_key": self.scraperapi_key,
-            "url": item_url
-        }
-
-        print(f"      [🕷] Fetching deep landing page via ScraperAPI...")
-        try:
-            response = requests.get("https://api.scraperapi.com/", params=payload, timeout=30)
-            if response.status_code == 200:
-                return response.text
-            else:
-                print(f"      ❌ ScraperAPI returned status code: {response.status_code}")
-                return ""
-        except Exception as e:
-            print(f"      ❌ Exception occurred during page proxy request: {e}")
-            return ""

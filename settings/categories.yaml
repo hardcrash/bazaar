@@ -43,25 +43,25 @@ CPU:
     "DIXIE", "MA5800", "YAMAYO", "JOINT", "MOOG", "VVG", "DELL"
   ]
 
-  # definitions for each sub-search category
+  # 🌟 Fixed Indentation: Nested cleanly inside the CPU category context
   active_harvest:
     enabled: true
     limit_per_sweep: 200
     min_price: 50
-    max_price: 250
+    max_price: 70  # Updated threshold to encapsulate high-end 5950X chips safely
     step_size: 10.0
     ebay_category_id: 164
     ebay_condition: [7000]
 
-historical_harvest:
+  historical_harvest:
     enabled: true
     lookback_days: 365
     limit_per_sweep: 2000
     require_sold: true
-    step_size: 10.0          # 🌟 Modularity Win: Categorical step increments managed here
+    step_size: 10.0      # 🌟 Modularity Win: Categorical step increments managed here
     min_price_broken: 50
     max_price_broken: 250
-    min_price_used: 115
-    max_price_used: 120
+    min_price_used: 110
+    max_price_used: 120  # Adjusted upwards to catch high-end functional historical sales
     ebay_category_id: 164
     ebay_condition: [2000, 3000, 7000]

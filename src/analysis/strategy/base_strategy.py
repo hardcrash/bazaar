@@ -1,51 +1,65 @@
+# src/analysis/strategy/base_strategy.py
 from abc import ABC, abstractmethod
-from typing import Tuple
+from src.core.models import MarketItem
 
-class BaseStrategy(ABC):
-    """
-    Abstract Base Class for all product analysis strategies.
-    Any new category MUST implement these methods.
-    """
-    def __init__(self, config_dict: dict):
+class BaseCategoryStrategy(ABC):
+    def __init__(self, category_name: str, yaml_data: dict):
         """
-        config_dict: The category-specific configuration dictionary
-                     pulled from config.categories[category_key]
+        Populates category-wide rules from config/categories.yaml
         """
-        self.config = config_dict
-        self.noise_words = config_dict.get("noise_words", [])
-        self.blacklist_words = config_dict.get("blacklist_words", [])
+        self.category_name = category_name
+        self.config = yaml_data.get(category_name, {})
 
+    @property
+    def blacklist_words(self) -> list:
+        return self.config.get("blacklist_words", [])
+
+    @property
+    def local_noise_blacklist(self) -> list:
+        return self.config.get("local_noise_blacklist", [])
+
+    @property
+    def valid_models(self) -> list:
+        return self.config.get("valid_models", [])
+
+    @property
+    def search_format(self) -> str:
+        return self.config.get("search_format", "{model}")
+
+    @property
     @abstractmethod
-    def is_valid(self, title: str) -> bool:
-        """Determines if the listing is a candidate for sourcing."""
+    def category_id(self) -> str:
+        """Returns targeted operational pathway category ID string."""
+        pass
+
+    @property
+    @abstractmethod
+    def price_bounds(self) -> tuple[float, float]:
+        """Returns a tuple of (min_price, max_price) for the current execution."""
+        pass
+
+    @property
+    @abstractmethod
+    def step_size(self) -> float:
+        """Returns step increment for search bracket slicing."""
         pass
 
     @abstractmethod
-    def clean_title(self, title: str) -> str:
-        """Removes noise words to normalize the title for matching."""
+    def clean_title(self, raw_title: str) -> str:
         pass
 
     @abstractmethod
-    def extract_model(self, title: str) -> str:
-        """Identifies the canonical model name from the cleaned title."""
+    def extract_model(self, title_upper: str, target_upper: str) -> str:
         pass
 
-    def parse_title(self, title: str) -> Tuple[str, str]:
-        """
-        Unified ingestion bridge called by the pipeline.
-        Returns: (brand, model_name)
-        """
-        upper_title = title.upper()
-        if not self.is_valid(upper_title):
-            return "UNKNOWN", "UNKNOWN"
+    @abstractmethod
+    def is_valid(self, title: str, target_model: str) -> str:
+        pass
 
-        cleaned = self.clean_title(upper_title)
-        model = self.extract_model(cleaned)
+    @abstractmethod
+    def extract_specific_attributes(self, html_content: str, item: MarketItem) -> MarketItem:
+        pass
 
-        # Pull brand from config context or fallback
-        brand = self.config.get("brand", "UNKNOWN").upper()
-        return brand, (model if model else "UNKNOWN")
-
-    def get_sourcing_score(self, title: str, price: float) -> float:
-        """Optional: Defines how we rank a 'broken' item for purchase."""
-        return 0.0
+    @abstractmethod
+    def is_valid_standalone(self, item: MarketItem) -> bool:
+        pass

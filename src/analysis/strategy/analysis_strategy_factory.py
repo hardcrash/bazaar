@@ -1,20 +1,24 @@
-from src.analysis.strategy.cpu_strategy import CPUStrategy
-from src.analysis.strategy.motherboard_strategy import MotherboardStrategy
+# src/analysis/strategy/analysis_strategy_factory.py
+from src.analysis.strategy.cpu_strategy import ActiveCPUStrategy, HistoricalCPUStrategy
 
 class AnalysisStrategyFactory:
     @staticmethod
-    def get_strategy_for_category(category_key: str, config) -> any:
+    def get_strategy(category_key: str, mode: str, config) -> any:
         """
-        category_key: e.g., 'CPU', 'MOTHERBOARD'
-        config: The complete AppConfig provider instance
+        category_key: e.g., 'CPU'
+        mode: 'active' or 'historical'
         """
-        # Isolate the targeted configurations for the specific block
         cat_upper = category_key.upper()
-        cat_config = config.categories.get(category_key, {}) if hasattr(config, 'categories') else {}
+        # Pass the global yaml data payload raw to the strategy initializer
+        yaml_data = config.categories if hasattr(config, 'categories') else {}
 
         if cat_upper == "CPU":
-            return CPUStrategy(config_dict=cat_config)
-        elif cat_upper == "MOTHERBOARD":
-            return MotherboardStrategy(config_dict=cat_config)
+            if mode.lower() == "historical":
+                return HistoricalCPUStrategy(category_name="CPU", yaml_data=yaml_data)
+            return ActiveCPUStrategy(category_name="CPU", yaml_data=yaml_data)
+
+        elif cat_upper in ["HIGH_TIER_MOTHERBOARD", "MID_TIER_MOTHERBOARD"]:
+            # Placeholder for upcoming Motherboard classes
+            raise NotImplementedError("Motherboard tracking structures are coming next!")
         else:
-            raise ValueError(f"❌ Unsupported pipeline execution category strategy: {category_key}")
+            raise ValueError(f"❌ Unsupported pipeline category: {category_key}")
