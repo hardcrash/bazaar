@@ -4,7 +4,7 @@
 
 Secrets and runtime configurations are managed via YAML files in the root directory and the settings/ folder.
 
-### 1. Secrets (config_credentials.yaml)
+### 1. Secrets (config.yaml)
 
 Manage your API/OAuth connections here:
 
