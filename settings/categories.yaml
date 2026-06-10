@@ -43,8 +43,7 @@ CPU:
 #   "5600"
 # ]
 
-
-model_variants:
+  model_variants:
     "5950X": ["5950X"]
     "5900X": ["5900X", "5900XT", "5900"]
     "5800X": ["5800X", "5800X3D", "5800XT", "5800"]
@@ -55,7 +54,6 @@ model_variants:
   multisku_models: [
     "5600X", "5700X", "5700X3D", "5800X", "5800X3D", "5900X", "5950X"
   ]
-
 
   brands: ["AMD"]
 
@@ -84,7 +82,7 @@ model_variants:
     enabled: true
     limit_per_sweep: 200
     min_price: 50
-    max_price: 70  # Updated threshold to encapsulate high-end 5950X chips safely
+    max_price: 650  # Fixed threshold to encapsulate high-end 5950X chips safely
     step_size: 10.0
     ebay_category_id: 164
     ebay_condition: [7000]
