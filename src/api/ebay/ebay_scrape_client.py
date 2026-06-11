@@ -1,19 +1,16 @@
-# src/api/ebay/ebay_scrape_client.py
-
-import requests
-import logging
-import time
-import random
+import os
 import re
 import yaml
-import os
+import time
+import random
 import urllib.parse
-from bs4 import BeautifulSoup
 from typing import List, Optional
+import requests
+from bs4 import BeautifulSoup
+from loguru import logger
+
 from src.core.models import MarketItem
 from src.analysis.strategy.cpu_strategy import BaseCPUStrategy
-
-logger = logging.getLogger("BazaarPipeline")
 
 class EbayScrapeClient:
     def __init__(self, config, min_wait: float = 2.0, max_wait: float = 5.0):
@@ -39,12 +36,14 @@ class EbayScrapeClient:
                             elif raw_yaml:
                                 global_cfg = raw_yaml
             except Exception as e:
-                print(f"[⚠️] Could not read config.yaml from disk: {e}")
+                logger.warning(f"Could not read alternative credentials config from disk: {e}")
 
         self.provider = str(global_cfg.get("active_scraper_proxy", "scrapeops")).lower()
         self.scrapeops_key = str(global_cfg.get("scrapeops_api_key", "")).strip()
         self.scraperapi_key = str(global_cfg.get("scraperapi_key", "")).strip()
         self.timeout = int(global_cfg.get("api_timeout_seconds", 20))
+
+        logger.info(f"EbayScrapeClient router mapped successfully to provider edge: {self.provider.upper()}")
 
     def _enforce_politeness(self):
         """Ensures a minimum gap between requests with random jitter to prevent detection."""
@@ -52,6 +51,7 @@ class EbayScrapeClient:
         if elapsed < self.min_wait:
             jitter = random.uniform(0, self.max_wait - self.min_wait)
             sleep_time = (self.min_wait - elapsed) + jitter
+            logger.debug(f"Politeness lock active. Throttling gateway call for {sleep_time:.2f}s")
             time.sleep(sleep_time)
         self.last_request_time = time.perf_counter()
 
@@ -88,12 +88,15 @@ class EbayScrapeClient:
             }
 
         try:
+            logger.debug(f"Dispatching API remote gateway call payload to {gateway_url}")
             response = requests.get(gateway_url, params=payload, timeout=self.timeout)
             if response.status_code == 200:
                 return self._parse_ebay_html(response.text, model_name, category_id, True, strategy)
+
+            logger.error(f"Gateway proxy rejection status code returned: {response.status_code}")
             return []
         except Exception as e:
-            print(f"[❌] Exception during execution pipeline: {e}")
+            logger.exception("Catastrophic connection breakout during remote scraping request")
             return []
 
     def _parse_ebay_html(self, html_content: str, model_name: str, category: str, is_sold: bool, strategy: BaseCPUStrategy) -> List[MarketItem]:
@@ -106,7 +109,8 @@ class EbayScrapeClient:
 
         for listing in listings:
             title_ele = listing.find(class_=lambda c: c and any(x in c for x in ["s-item__title", "card__title"]))
-            if not title_ele: continue
+            if not title_ele:
+                continue
 
             raw_title = title_ele.text.strip()
             title_clean = strategy.clean_title(raw_title)
@@ -116,17 +120,18 @@ class EbayScrapeClient:
                 continue
 
             price_ele = listing.find(class_=lambda c: c and any(x in c for x in ["s-item__price", "card__price"]))
-            if not price_ele: continue
+            if not price_ele:
+                continue
 
             price_str = "".join(c for c in price_ele.text.strip() if c.isdigit() or c == ".")
             try:
                 price_val = float(price_str)
-            except ValueError: continue
+            except ValueError:
+                continue
 
             item_url = listing.find("a", href=True)["href"] if listing.find("a", href=True) else None
             item_id = item_url.split("/itm/")[-1].split("?")[0] if item_url and "/itm/" in item_url else "0"
 
-            # SUCCESS: Added missing required fields: shipping_cost, currency, condition_id
             item_summaries.append(MarketItem(
                 item_id=item_id,
                 model_name=model_name,
@@ -134,19 +139,19 @@ class EbayScrapeClient:
                 raw_title=raw_title,
                 title=title_clean,
                 price=price_val,
-                shipping_cost=0.0,              # Required
+                shipping_cost=0.0,
                 total_cost=price_val,
-                currency="USD",                 # Required
-                condition_id=3000,              # Required
+                currency="USD",
+                condition_id=3000,
                 is_sold=is_sold,
                 source_platform="ebay",
                 item_url=item_url,
                 process_state="PENDING_DEEP_HARVEST" if status == "MSKU" else "PENDING"
             ))
 
-            print(f"    [Parser Accept] Strategy Verified MarketItem: '{title_clean}' | ${price_val}")
+            logger.debug(f"    [Parser Accept] Strategy Verified MarketItem: '{title_clean}' | ${price_val}")
 
-        print(f"[✅] Parser found {len(item_summaries)} items for {model_name}")
+        logger.info(f"Parser validation round closed. Extracted {len(item_summaries)} raw records for pattern: {model_name}")
         return item_summaries
 
     def fetch_raw_item_page(self, item_url: str, max_retries: int = 3) -> str:
@@ -159,13 +164,13 @@ class EbayScrapeClient:
                 if response.status_code == 200:
                     return response.text
                 else:
-                    logger.warning(f"Attempt {attempt+1} failed with status {response.status_code}")
+                    logger.warning(f"Deep Harvest deep connection attempt [{attempt+1}/{max_retries}] failed with status: {response.status_code}")
             except Exception as e:
-                logger.error(f"Attempt {attempt+1} triggered exception: {e}")
+                logger.error(f"Deep Harvest connection error exception on step [{attempt+1}/{max_retries}]: {e}")
 
-            # Wait a bit before retrying
             time.sleep(1)
 
+        logger.error(f"Deep Harvest extraction pool failure exhaustion for endpoint target: {item_url}")
         return ""
 
     def parse_msku_item_page(self, html_content: str, base_item) -> list:
@@ -186,10 +191,25 @@ class EbayScrapeClient:
         has_bent_pins = any(x in html_upper for x in ["BENT PIN", "BROKEN PIN", "DAMAGED PIN", "MISSING PIN"])
 
         start_match = re.search(r'"MSKU"\s*:\s*\{', html_content)
+        start_match = re.search(r'"MSKU"\s*:\s*\{', html_content)
+
         if not start_match:
-            print(f"      [⚠️] Error: Could not locate 'MSKU' schema block anchor on item {base_item.item_id}.")
+            logger.warning(f"  [⚠️] Multi-SKU Schema Exception: Missing block anchor on listing element ID: {base_item.item_id}")
             return []
 
         start_idx = start_match.end() - 1
         bracket_count = 0
         json_str = ""
+
+        # Complete the bracket-matching scan loop to safely isolate the JSON block
+        for i in range(start_idx, len(html_content)):
+            char = html_content[i]
+            json_str += char
+            if char == "{":
+                bracket_count += 1
+            elif char == "}":
+                bracket_count -= 1
+                if bracket_count == 0:
+                    break
+
+        return extracted_variants
