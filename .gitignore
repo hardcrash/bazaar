@@ -35,3 +35,7 @@ config_credentials.yaml
 *.swo
 *.*.swp
 
+# Log files
+*.log
+logs/
+!logs/.gitkeep
