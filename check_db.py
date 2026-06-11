@@ -1,38 +1,55 @@
-import sqlite3
 import sys
+from sqlalchemy import func, desc
+
+# Import your database manager and models
+from src.database.db_manager import DatabaseManager
+from src.database.models import MarketItemModel, HistoricalMetricModel
 
 def quick_look(limit=10):
-    db_path = "bazaar.db"
-    print(f"[🔍] Quick-checking latest snapshots in '{db_path}'...")
+    # Pass an empty dict config to default to the standard "bazaar.db"
+    # Or pass your actual application configuration object here
+    config = {"database": {"path": "bazaar.db"}}
+
+    print(f"[🔍] Initializing Database Manager...")
+    db = DatabaseManager(config)
+
+    # Generate an isolated session using your manager's factory
+    session = db.SessionLocal()
+    print(f"[🔍] Quick-checking latest snapshots in '{db.engine.url}'...")
 
     try:
-        with sqlite3.connect(db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+        # Check Snapshots
+        total_items = session.query(func.count(MarketItemModel.item_id)).scalar()
+        print(f" Total snapshots recorded: {total_items}")
 
-            # Check Snapshots
-            cursor.execute("SELECT COUNT(*) FROM market_snapshots")
-            print(f" Total snapshots recorded: {cursor.fetchone()[0]}")
+        # Check Metrics
+        total_metrics = session.query(func.count()).select_from(HistoricalMetricModel).scalar()
+        print(f" Total aggregated metric windows: {total_metrics}")
 
-            # Check Metrics
-            cursor.execute("SELECT COUNT(*) FROM historical_metrics")
-            print(f" Total aggregated metric windows: {cursor.fetchone()[0]}")
+        # Print a quick sample of the newest data
+        print(f"\n--- Last {limit} Records Added ---")
 
-            # Print a quick sample of the newest sold data
-            print(f"\n--- Last {limit} Records Added ---")
-            cursor.execute("""
-                SELECT item_id, model_name, price, shipping_cost, is_sold
-                FROM market_snapshots
-                ORDER BY date_fetched DESC
-                LIMIT ?
-            """, (limit,))
+        latest_records = (
+            session.query(MarketItemModel)
+            .order_by(desc(MarketItemModel.date_fetched))
+            .limit(limit)
+            .all()
+        )
 
-            for row in cursor.fetchall():
-                status = "SOLD" if row['is_sold'] else "ACTIVE"
-                print(f"[{status}] ID: {row['item_id']} | Model: {row['model_name']} | Landed: ${row['price'] + row['shipping_cost']:.2_f}")
+        for item in latest_records:
+            status = "SOLD" if item.is_sold else "ACTIVE"
+
+            # Using the schema columns directly
+            landed_price = item.price + item.shipping_cost
+
+            print(f"[{status}] ID: {item.item_id} | Model: {item.model_name} | Landed: ${landed_price:,.2f}")
 
     except Exception as e:
         print(f"[-] Failed to read database lookup: {e}")
+
+    finally:
+        # Always release the session back to the pool
+        session.close()
 
 if __name__ == "__main__":
     # Allows you to run `python check_db.py 20` to see more rows
