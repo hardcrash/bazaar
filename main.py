@@ -12,17 +12,26 @@ from src.ui.main_window import MainWindow
 
 def setup_logging(log_level: str = "DEBUG"):
     """Configures the loguru formatting matrix for streams and files."""
+    # 🌟 Clear any existing handlers upon initial initialization safely
     logger.remove()
 
-    # Terminal Stream Handler (Dynamic Level Wrapper Fixed 🌟)
+    # The clean multi-line layout template
+    terminal_format = (
+        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+        "<level>{level: <5}</level> | "
+        "<cyan>{name}:{function}:{line}</cyan>\n"   # Newline after metadata boundary
+        "    <level>{message}</level>"              # 4-space indent for the payload
+    )
+
+    # 1️⃣ The SINGLE Terminal Stream Handler
     logger.add(
         sys.stderr,
         level=log_level,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+        format=terminal_format,
         enqueue=True
     )
 
-    # Persistent Log File Handler
+    # 2️⃣ The SINGLE Persistent Log File Handler
     logger.add(
         "logs/bazaar.log",
         level="DEBUG",
@@ -30,6 +39,7 @@ def setup_logging(log_level: str = "DEBUG"):
         retention="14 days",
         compression="zip"
     )
+
     logger.debug(f"Logging core initialized engine state at level: {log_level}")
 
 def run_development_gatekeeper() -> bool:
