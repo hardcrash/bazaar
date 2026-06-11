@@ -56,7 +56,7 @@ class AnalysisController:
             while current_min < max_price:
                 current_max = min(current_min + bracket_size, max_price)
 
-                logger.debug(f"  ├─ Slicing Bracket Range: ${current_min:.2f} to ${current_max:.2f}")
+                logger.debug(f"Slicing Bracket Range: ${current_min:.2f} to ${current_max:.2f}")
                 metrics["total_requests_made"] += 1
 
                 raw_items = self.ebay.search_historical_sales(
@@ -74,7 +74,7 @@ class AnalysisController:
                     metrics["model_breakdown"][model] += item_count
                     metrics["successful_brackets"] += 1
                     all_scraped_items.extend(raw_items)
-                    logger.debug(f"  │  └─ Captured {item_count} items from slice bracket pool.")
+                    logger.debug(f"Captured {item_count} items from slice bracket pool.")
 
                 current_min = current_max + 0.01
 
@@ -86,7 +86,7 @@ class AnalysisController:
         if msku_queue:
             logger.info(f"Stage 2 Deep Harvesting: Processing {len(msku_queue)} multi-variation listings...")
             for msku_item in msku_queue:
-                logger.debug(f"  ├─► Processing Multi-Sku Matrix for Item ID: {msku_item.item_id}")
+                logger.debug(f"Processing Multi-Sku Matrix for Item ID: {msku_item.item_id}")
                 raw_html = self.ebay.fetch_raw_item_page(msku_item.item_url)
 
                 if raw_html:
@@ -98,7 +98,7 @@ class AnalysisController:
                                 metrics["variants_extracted"] += 1
                                 clean_final_items.append(variant)
                             else:
-                                logger.warning(f"  │  ├── Filtering cross-bleed variant: '{variant.title}'")
+                                logger.warning(f"Filtering cross-bleed variant: '{variant.title}'")
                 else:
                     logger.error(f"  │  ├── Network Skip: Could not fetch raw HTML payload for product ID: {msku_item.item_id}")
 
