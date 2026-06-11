@@ -107,13 +107,9 @@ class AnalysisController:
 
         # Log pipeline performance as a structured breakdown summary block
         logger.success(
-            f"Pipeline Completed successfully!\n"
-            f"==================================================\n"
-            f"📊 {self.target_category} HARVESTING PIPELINE SUMMARY ({run_type})\n"
-            f"==================================================\n"
-            f" Duration        : {int(minutes)}m {seconds:.2f}s\n"
-            f" Total Requests  : {metrics['total_requests_made']} API calls\n"
-            f" Items Scraped   : {metrics['total_items_harvested']} records\n"
-            f" MSKU Multi-Skus : {metrics['msku_listings_found']} found -> {metrics['variants_extracted']} options unpacked\n"
-            f"=================================================="
+            f"📊 {self.target_category} HARVESTING PIPELINE SUMMARY ({run_type}) - "
+            f"Time: {int(minutes)}m {seconds:.2f}s |"
+            f"Tot. Reqs: {metrics['total_requests_made']} API calls |"
+            f"Items: {metrics['total_items_harvested']} records |"
+            f"MSKUs: {metrics['msku_listings_found']} found -> {metrics['variants_extracted']} unpacked"
         )
