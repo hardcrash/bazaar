@@ -1,9 +1,0 @@
-# settings/policies.yaml
-policies:
-  CPU:
-    min_price: 25.0
-    max_price: 800.0
-    require_sourcing_keyword: true
-  Motherboard_High:
-    min_price: 50.0
-    max_price: 1200.0
