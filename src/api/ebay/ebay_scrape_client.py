@@ -8,6 +8,7 @@ from typing import List, Optional
 import requests
 from bs4 import BeautifulSoup
 from loguru import logger
+import json
 
 from src.core.models import MarketItem
 from src.analysis.strategy.cpu_strategy import BaseCPUStrategy
@@ -149,7 +150,7 @@ class EbayScrapeClient:
                 process_state="PENDING_DEEP_HARVEST" if status == "MSKU" else "PENDING"
             ))
 
-            logger.debug(f"    [Parser Accept] Strategy Verified MarketItem: '{title_clean}' | ${price_val}")
+            logger.debug(f" [Parser Accept] Strategy Verified MarketItem: '{title_clean}' | ${price_val}")
 
         logger.info(f"Parser validation round closed. Extracted {len(item_summaries)} raw records for pattern: {model_name}")
         return item_summaries
@@ -174,9 +175,17 @@ class EbayScrapeClient:
         return ""
 
     def parse_msku_item_page(self, html_content: str, base_item) -> list:
+
+        # Guard against connection timeouts returning empty payloads
+        if not html_content or len(html_content.strip()) == 0:
+            logger.error(f"  [❌] Deep Harvest Aborted: Received empty HTML payload for Item ID: {base_item.item_id} due to upstream gateway timeout.")
+            return []
+
         extracted_variants = []
+        soup = BeautifulSoup(html_content, "html.parser")
         html_upper = html_content.upper()
 
+        # 1. Capture Seller Metadata Parameters
         feedback_score = None
         fb_match = re.search(r'feedbackScore"\s*:\s*(\d+)', html_content)
         if fb_match:
@@ -190,26 +199,103 @@ class EbayScrapeClient:
         is_top_rated = "TOP-RATED SELLER" in html_upper or "TOP_RATED_SELLER" in html_upper
         has_bent_pins = any(x in html_upper for x in ["BENT PIN", "BROKEN PIN", "DAMAGED PIN", "MISSING PIN"])
 
-        start_match = re.search(r'"MSKU"\s*:\s*\{', html_content)
-        start_match = re.search(r'"MSKU"\s*:\s*\{', html_content)
+        # 2. ENGINE ALPHA: Check for Modern 'x-msku-evo' DOM Elements
+        sku_options = soup.find_all(class_="listbox__option", attrs={"data-sku-value-name": True})
 
-        if not start_match:
+        if sku_options:
+            for index, option in enumerate(sku_options):
+                variant_text = option["data-sku-value-name"].strip()
+                if not variant_text or variant_text.upper() == "SELECT":
+                    continue
+                if option.has_attr("aria-disabled") and option["aria-disabled"].lower() == "true":
+                    continue  # Skip out of stock options
+
+                extracted_variants.append({
+                    "text": variant_text,
+                    "index": index,
+                    "price_mod": base_item.price
+                })
+
+        # 3. ENGINE BETA: Legacy & Universal Fallback if Modern DOM Engine found nothing
+        else:
+            # Pattern 1: Classic itmVarModel Script Tag
+            var_model_match = re.search(r'"itmVarModel"\s*:\s*(\{.*?\})(?:,\s*"|\s*\})', html_content)
+
+            # Pattern 2: ItemJson State Variable Object
+            if not var_model_match:
+                var_model_match = re.search(r'ItemJson["\']\s*:\s*(\{.*?\})(?:,\s*"|\s*\})', html_content)
+
+            # Pattern 3: 🌟 NEW Universal view-model context block injection
+            if not var_model_match:
+                var_model_match = re.search(r'window\.__context__\s*=\s*(\{.*?\})(?:;\s*</script>|;\s*window)', html_content)
+
+            if var_model_match:
+                try:
+                    model_data = json.loads(var_model_match.group(1))
+
+                    # Dig down into deep parameters tree layout patterns
+                    menu_items = None
+                    if "menuItemMap" in model_data:
+                        menu_items = model_data["menuItemMap"]
+                    elif "menuViewModel" in model_data:
+                        menu_items = model_data["menuViewModel"].get("menuItemMap")
+                    elif "model" in model_data and "itmVarModel" in model_data["model"]:
+                        menu_items = model_data["model"]["itmVarModel"].get("menuItemMap")
+
+                    if menu_items:
+                        for idx, (menu_id, details) in enumerate(menu_items.items()):
+                            variant_text = details.get("text")
+                            if not variant_text or variant_text.upper() == "SELECT":
+                                continue
+
+                            variant_price = base_item.price
+                            if "price" in details:
+                                try:
+                                    variant_price = float("".join(c for c in str(details["price"]) if c.isdigit() or c == "."))
+                                except ValueError:
+                                    pass
+
+                            extracted_variants.append({
+                                "text": variant_text,
+                                "index": idx,
+                                "price_mod": variant_price
+                            })
+                except Exception as json_err:
+                    logger.error(f"Error decoding legacy/universal variation payload JSON: {json_err}")
+
+        # 4. Final Verification Guard Clause
+        if not extracted_variants:
             logger.warning(f"  [⚠️] Multi-SKU Schema Exception: Missing block anchor on listing element ID: {base_item.item_id}")
             return []
 
-        start_idx = start_match.end() - 1
-        bracket_count = 0
-        json_str = ""
+        # 5. Build and Pack MarketItem Objects
+        final_records = []
+        for item in extracted_variants:
+            variant_title = f"{base_item.title} ({item['text']})".strip()
 
-        # Complete the bracket-matching scan loop to safely isolate the JSON block
-        for i in range(start_idx, len(html_content)):
-            char = html_content[i]
-            json_str += char
-            if char == "{":
-                bracket_count += 1
-            elif char == "}":
-                bracket_count -= 1
-                if bracket_count == 0:
-                    break
+            cloned_variant = MarketItem(
+                item_id=f"{base_item.item_id}-v{item['index']}",
+                model_name=base_item.model_name,
+                category=base_item.category,
+                raw_title=f"{base_item.raw_title} [{item['text']}]",
+                title=variant_title,
+                price=item['price_mod'],
+                shipping_cost=base_item.shipping_cost,
+                total_cost=item['price_mod'] + base_item.shipping_cost,
+                currency=base_item.currency,
+                condition_id=base_item.condition_id,
+                is_sold=base_item.is_sold,
+                source_platform="ebay",
+                item_url=base_item.item_url,
+                process_state="PENDING"
+            )
 
-        return extracted_variants
+            cloned_variant.seller_feedback_score = feedback_score
+            cloned_variant.seller_feedback_percent = feedback_pct
+            cloned_variant.is_top_rated_seller = is_top_rated
+            cloned_variant.has_bent_pins = has_bent_pins
+
+            final_records.append(cloned_variant)
+
+        logger.debug(f"  │  └─ Captured {len(final_records)} items from variation bracket pool.")
+        return final_records
