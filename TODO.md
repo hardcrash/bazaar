@@ -17,16 +17,13 @@
 
 ### Phase 1: Foundation & Persistence
 
-* [ ] **Migrate to SQLAlchemy 2.0:** Define all database tables as ORM models within `src/database/models.py`.
+
 * [ ] **Implement `DatabaseManager`:** Create a robust session-based manager ensuring connection persistence and `INSERT OR REPLACE` logic for active data.
-* [ ] **Environment Setup:** Configure `.env` management (using `python-dotenv`) to cleanly toggle between `DEV` and `PROD` environments/databases.
 
 ### Phase 2: Ingestion Engine
 
 * [ ] **Implement `eBayApiClient`:** Develop the official API interface using OAuth2 credentials to replace current scraping logic.
 * [ ] **Data Validation Layer:** Implement `Pydantic` models to validate and sanitize incoming eBay JSON before it is committed to the database.
-* [ ] **Dev Mode Pipeline:** Create a "Pre-flight" check (triggered if `DEV_MODE=True`) that runs unit tests against the API client and database schema before the main logic initializes.
-
 
 ### Phase 3: Data Consolidation & Analytics
 
@@ -40,6 +37,5 @@
 
 * [ ] **Unit Velocity Tracker: Implement the calculation logic for "Days on Market" (DoM) utilizing item_start_date and date_fetched to identify stagnant vs. high-velocity inventory.
 
-* [ ] **Database View/Indexing: Create SQL views for the GUI to consume pre-aggregated metrics, preventing expensive GROUP BY operations during runtime.
 
 ---
