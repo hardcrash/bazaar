@@ -94,6 +94,11 @@ def main():
         help="Execute harvest pipelines inside the PySide6 Graphical Interface."
     )
 
+    # 🌟 IMMEDIATE EXIT GUARD: Print usage syntax and exit cleanly if no flags/actions are passed
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(0)
+
     args = parser.parse_args()
 
     # Set logging thresholds based on verbosity flag
@@ -133,8 +138,8 @@ def main():
             controller.run_harvest(mode="historical", dry_run=args.dry_run)
             controller.run_consolidation()
         else:
-            if not args.action:
-                parser.print_help()
+            # Fallback catch for unexpected parsing scenarios
+            parser.print_help()
 
 if __name__ == "__main__":
     main()

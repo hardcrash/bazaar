@@ -1,3 +1,5 @@
+# check_db.py
+
 import sys
 from loguru import logger
 from sqlalchemy import func, desc
@@ -5,7 +7,7 @@ from sqlalchemy import func, desc
 from src.database.db_manager import DatabaseManager
 from src.database.models import MarketItemModel, HistoricalMetricModel
 
-def quick_look(limit=10):
+def quick_look(limit=20):
     config = {"database": {"path": "bazaar.db"}}
 
     logger.info("Initializing Database Manager...")
@@ -37,17 +39,23 @@ def quick_look(limit=10):
             status = "SOLD" if item.is_sold else "ACTIVE"
             landed_price = item.price + item.shipping_cost
 
-            # Using logger.success for parsed records
-            logger.success(f"[{status}] ID: {item.item_id} | Model: {item.model_name} | Landed: ${landed_price:,.2f}")
+            # Extract processing state context defaults securely if none exist on row
+            p_state = getattr(item, "process_state", "UNKNOWN").upper()
+
+            # Using logger.success for parsed records containing process_state bounds
+            logger.success(
+                f"[{status}] [{p_state}] ID: {item.item_id} | "
+                f"Model: {item.model_name} | Landed: ${landed_price:,.2f}"
+            )
 
     except Exception as e:
         # Loguru handles the exception tracking beautifully
-        logger.exception(f"Failed to execute database lookup lookup")
+        logger.exception(f"Failed to execute database lookup")
 
     finally:
         session.close()
         logger.debug("Database session closed successfully.")
 
 if __name__ == "__main__":
-    lim = int(sys.argv[1]) if len(sys.argv) > 1 else 10
+    lim = int(sys.argv[1]) if len(sys.argv) > 1 else 20
     quick_look(lim)

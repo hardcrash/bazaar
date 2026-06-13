@@ -148,35 +148,45 @@ Here is the project structure for `bazaar-data` in Markdown format:
 
 *Note: `__pycache__` and `.venv` directories have been omitted for clarity.*
 
-                       ┌─────────────────────────┐
-                       │   AnalysisController    │
-                       └────────────┬────────────┘
-                                    │
-                ┌───────────────────┴───────────────────┐
-                │                                       │
-      ┌─────────▼───────────────┐          ┌────────────▼──────────────┐
-      │  Live Active Cycle      │          │    Historical Cycle       │
-      ├─────────────────────────┤          ├───────────────────────────┤
-      │ • Source: eBay API      │          │ • Source: Scrape Client   │
-      │ • Scope: Open Listings  │          │ • Scope: Past Sold Data   │
-      │ • Intent: Price Sniping │          │ • Intent: Indexing Values │
-      └─────────┬───────────────┘          └────────────┬──────────────┘
-                │                                       │
-                └───────────┬───────────────────────────┘
-                            ▼
-              ┌───────────────────────────┐
-              │  Transformer / Sanitizer  │
-              │ (src/analysis/transformer)│
-              └─────────────┬─────────────┘
-                            │
-              ┌─────────────▼─────────────┐
-              │   Strategy Classification │
-              │ (src/analysis/strategy/..)│
-              └─────────────┬─────────────┘
-                            │
-              ┌─────────────▼─────────────┐
-              │    Database Persistence   │
-              │ (src/database/db_manager) │
-              └───────────────────────────┘
+                        ┌─────────────────────────┐
+                        │    AnalysisController   │
+                        └────────────┬────────────┘
+                                     │
+                ┌────────────────────┴────────────────────┐
+                │                                         │
+      ┌─────────▼───────────────┐               ┌─────────▼───────────────┐
+      │    Live Active Cycle    │               │    Historical Cycle     │
+      ├─────────────────────────┤               ├─────────────────────────┤
+      │ • Source: eBay API      │               │ • Source: Scrape Client │
+      │ • Scope: Open Listings  │               │ • Scope: Past Sold Data │
+      │ • Intent: Price Sniping │               │ • Intent: Value Index   │
+      └─────────┬───────────────┘               └─────────┬───────────────┘
+                │                                         │
+                └────────────────────┬────────────────────┘
+                                     │
+                                     ▼  [Raw JSON Dict / Raw HTML Attributes]
+                   ┌───────────────────────────────────┐
+                   │    Unified Pydantic Model Layer   │
+                   │      (src/core/schemas/market)    │
+                   ├───────────────────────────────────┤
+                   │  • Field-level Type Coercion      │ <── Replaces standalone
+                   │  • String / Space Sanitation      │     Transformer module
+                   │  • Source Tagging via Enums       │
+                   └─────────────────┬─────────────────┘
+                                     │
+                                     ▼  [Fully Validated Object]
+                   ┌───────────────────────────────────┐
+                   │      Strategy Classification      │
+                   │    (src/analysis/strategy/..)     │
+                   ├───────────────────────────────────┤
+                   │  • Pattern / Model Matching       │
+                   │  • Multi-SKU Flag Validation      │
+                   └─────────────────┬─────────────────┘
+                                     │
+                                     ▼  [Filtered & Tagged Records]
+                   ┌───────────────────────────────────┐
+                   │       Database Persistence        │
+                   │     (src/database/db_manager)     │
+                   └───────────────────────────────────┘
 
 pytest test/

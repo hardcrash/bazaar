@@ -9,9 +9,22 @@ class AppConfig:
         current_dir = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.dirname(os.path.dirname(current_dir))
 
+        # Define explicit absolute directory paths
+        self.project_root = project_root
         self.settings_path = os.path.join(project_root, settings_dir)
+
+        logger.debug(f"Resolving root path to: {self.project_root}")
         logger.debug(f"Resolving settings path to: {self.settings_path}")
 
+        # 1. Load the core configuration file right from the PROJECT ROOT
+        config_data = self._load_yaml(os.path.join(self.project_root, "config.yaml"))
+
+        # Hydrate configuration values directly into AppConfig instance fields
+        for key, value in config_data.items():
+            setattr(self, key, value)
+        logger.info("Successfully loaded and hydrated root core configuration parameters.")
+
+        # 2. Load the data category matrix from the SETTINGS SUBDIRECTORY
         self.categories = self._load_yaml(os.path.join(self.settings_path, "categories.yaml"))
         logger.info("Successfully loaded unified categories configuration matrix.")
 
