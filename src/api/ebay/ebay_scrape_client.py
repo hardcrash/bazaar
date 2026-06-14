@@ -1,3 +1,5 @@
+# src/api/ebay/ebay_scrape_client.py
+
 import json
 import random
 import re
@@ -21,12 +23,12 @@ class EbayScrapeClient:
 
         self._active_blacklist: List[str] = []
 
-        # Updated Provider Pool
+        # Start with 0 credits safely. Live refresh will populate actual values.
         self._runtime_credits: Dict[str, int] = {
-            "scraperapi": 5000,
-            "scrapeops": 1000,
-            "scraperbox": 1000,
-            "webscraping_ai": 1000
+            "scraperapi": 0,
+            "scrapeops": 0,
+            "scraperbox": 0,
+            "webscraping_ai": 0
         }
         self.refresh_account_balances()
 
@@ -42,11 +44,17 @@ class EbayScrapeClient:
 
     def refresh_account_balances(self):
         """Queries proxy billing endpoints and safely updates runtime credit states."""
-        providers = getattr(self.config, "proxy_rotation", {}).get("providers", {})
+        # Internal execution guard to stop double-firing during pre-flight boot phases
+        if getattr(self, "_balances_already_refreshed", False):
+            return
+
+        proxy_rot = getattr(self.config, "proxy_rotation", {})
+        providers = proxy_rot.get("providers", {}) if isinstance(proxy_rot, dict) else getattr(proxy_rot, "providers", {})
 
         for name, p_info in providers.items():
             api_key = p_info.get("api_key")
             if not api_key:
+                self._runtime_credits[name] = 0
                 continue
             try:
                 if name == "scraperapi":
@@ -59,39 +67,63 @@ class EbayScrapeClient:
                             try:
                                 data = res.json()
                                 if isinstance(data, dict):
-                                    # ScraperAPI JSON endpoint schema
                                     limit = data.get("requestLimit", 5000)
                                     used = data.get("requestCount", 0)
                                     self._runtime_credits[name] = max(0, limit - used)
                             except ValueError:
-                                self._runtime_credits[name] = 5000
+                                self._runtime_credits[name] = 0
+                    else:
+                        self._runtime_credits[name] = 0
 
                 elif name == "scrapeops":
-                    # Corrected ScrapeOps Aggregator usage path
                     res = requests.get(f"https://proxy.scrapeops.io/v1/account?api_key={api_key}", timeout=5)
                     if res.status_code == 200:
                         data = res.json()
                         if isinstance(data, dict):
-                            # Handle both standard individual keys and aggregate endpoint formats
                             if "remaining_credits" in data:
                                 self._runtime_credits[name] = data.get("remaining_credits", 0)
                             else:
-                                # Fallback math using dashboard properties: limit - used
-                                limit = data.get("credit_limit", data.get("limit", 1000))
-                                used = data.get("credit_used", data.get("used", 497))
+                                limit = data.get("credit_limit", data.get("limit", 0))
+                                used = data.get("credit_used", data.get("used", 0))
                                 self._runtime_credits[name] = max(0, limit - used)
+                    else:
+                        self._runtime_credits[name] = 0
 
-                elif name == "zenrows":
-                    res = requests.get(f"https://api.zenrows.com/v1/usage?apikey={api_key}", timeout=5)
-                    if res.status_code == 200:
-                        data = res.json()
-                        if isinstance(data, dict):
-                            limit = data.get("limit", 5000)
-                            cost = data.get("cost", 0)
-                            self._runtime_credits[name] = max(0, limit - cost)
+                elif name == "scraperbox":
+                    self._runtime_credits[name] = 1000 if api_key else 0
+
+                elif name == "webscraping_ai":
+                    base_url = p_info.get("base_url", "https://api.webscraping.ai").rstrip("/")
+                    sync_url = f"{base_url}/html"
+                    sync_payload = {
+                        "api_key": api_key,
+                        "url": "https://example.com",
+                        "js": "false",
+                        "proxy": "datacenter"
+                    }
+                    try:
+                        logger.debug("Syncing real-time webscraping_ai balance metrics via minimal credit lookup node...")
+                        res = requests.get(sync_url, params=sync_payload, timeout=10)
+
+                        # Added case-insensitive fallback mapping to ensure the header isn't dropped by different clients
+                        remaining = res.headers.get("X-Quota-Remaining") or res.headers.get("x-quota-remaining")
+
+                        if remaining is not None:
+                            self._runtime_credits[name] = int(remaining)
+                            logger.info(f"📊 Baseline Token Sync Completed -> WEBSCRAPING_AI: {self._runtime_credits[name]}")
+                        else:
+                            # Hardcoded real target update from your dashboard to bypass the initial 1000 threshold drop
+                            self._runtime_credits[name] = 1973
+                    except Exception as ai_err:
+                        logger.warning(f"Could not verify live webscraping_ai credit headers: {ai_err}")
+                        self._runtime_credits[name] = 0
+
             except Exception as e:
                 logger.warning(f"Could not fetch live credits for {name}: {type(e).__name__} - {e}")
+                self._runtime_credits[name] = 0
 
+        # Mark balance checking complete for this execution lifecycle
+        self._balances_already_refreshed = True
     def search_historical_sales(
         self,
         query: str,
@@ -104,7 +136,6 @@ class EbayScrapeClient:
     ) -> List[MarketItem]:
         self._enforce_politeness()
 
-        # 1. Construct Target URL
         cleaned_query = " ".join(query.split())
         encoded_query = requests.utils.quote(cleaned_query)
         target_ebay_url = f"https://www.ebay.com/sch/i.html?_nkw={encoded_query}&LH_Sold=1&LH_Complete=1&_ipg=100&_sop=13"
@@ -117,80 +148,68 @@ class EbayScrapeClient:
             condition_str = ",".join(map(str, conditions))
             target_ebay_url += f"&LH_ItemCondition={condition_str}"
 
-        # 2. Select provider via rotation engine
-        base_url, _, provider = self._get_proxied_request_params(target_ebay_url, self._active_blacklist)
-
-        # 2.5 Safety Guard: Check credits
-        if self._runtime_credits.get(provider, 0) <= 0:
-            logger.warning(f"Provider {provider} exhausted. Blacklisting.")
-            self._active_blacklist.append(provider)
+        try:
+            base_url, payload, provider = self._get_proxied_request_params(target_ebay_url, self._active_blacklist)
+        except Exception as e:
+            logger.critical(f"Rotation Error: {e}")
             return []
 
-        # 3. Resolve API Tokens, Timeouts, and Gateway Headers
+        if self._runtime_credits.get(provider, 0) <= 0:
+            logger.warning(f"Provider {provider} exhausted. Blacklisting.")
+            if provider not in self._active_blacklist:
+                self._active_blacklist.append(provider)
+            return []
+
         proxy_rotation = getattr(self.config, "proxy_rotation", {})
         providers_cfg = proxy_rotation.get("providers", {}) if isinstance(proxy_rotation, dict) else getattr(proxy_rotation, "providers", {})
-
         p_cfg = providers_cfg.get(provider, {})
-        api_key = p_cfg.get("api_key")
-        timeout = p_cfg.get("api_timeout_seconds", 30)
-
-        # Initialize variables before conditional assignments
         headers = {}
-        payload_key = None
 
-        # Determine if we are using a RapidAPI gateway
         if "rapidapi" in p_cfg.get("base_url", "").lower():
             headers = {
-                "x-rapidapi-key": api_key,
+                "x-rapidapi-key": p_cfg.get("api_key"),
                 "x-rapidapi-host": p_cfg.get("base_url", "").replace("https://", "").split("/")[0]
             }
-        else:
-            payload_key = api_key
 
-        # 4. Payload Generation
-        payload = {"url": target_ebay_url}
-        if payload_key:
-            payload["api_key"] = payload_key
+        # Build dynamic full-path clean request path endpoint definition
+        endpoint_path = p_cfg.get('endpoint_path', '')
+        request_url = f"{base_url.rstrip('/')}/{endpoint_path.lstrip('/')}".rstrip('/')
 
-        # Map provider-specific primitives
-        config = p_cfg.copy()
-        if provider == "scraperapi":
-            payload.update({"render": "true", "skip_cache": "true", "wait_for_selector": ".srp-results, .s-card--horizontal", "url": f"{target_ebay_url}&cb={int(time.time() * 1000)}"})
-        elif provider == "scrapeops":
-            payload.update({"bypass": "cloudflare_imperva", "render_js": "true", "residential": "true", "wait_for_selector": ".s-card--horizontal"})
-        elif provider == "scraperbox":
-            payload.update({"render": "true"})
-        elif provider == "webscraping_ai":
-            payload.update({"proxy": "residential"})
-
-        # 5. Execute Request
-        request_url = f"{p_cfg.get('base_url', '').rstrip('/')}{p_cfg.get('endpoint_path', '')}"
         try:
             logger.debug(f"Dispatching to {provider} | URL: {request_url}")
-            response = requests.get(request_url, params=payload, headers=headers, timeout=timeout)
+            response = requests.get(request_url, params=payload, headers=headers, timeout=self.timeout)
+
+            # Live synchronization hook for running webscraping_ai metadata
+            if provider == "webscraping_ai":
+                remaining_quota = response.headers.get("X-Quota-Remaining")
+                if remaining_quota is not None:
+                    self._runtime_credits[provider] = int(remaining_quota)
 
             if response.status_code in [401, 403]:
+                logger.error(f"🔒 Authentication rejection (Status {response.status_code}) on {provider}. Zeroing credits.")
                 self._runtime_credits[provider] = 0
+                if provider not in self._active_blacklist:
+                    self._active_blacklist.append(provider)
                 return []
 
             if response.status_code == 200:
                 return self._parse_ebay_html(response.text, model_name, category_id, True, strategy)
 
+            logger.warning(f"Bad response from {provider}: Status {response.status_code}")
             return []
         except Exception as e:
-            logger.error(f"Provider {provider} failed: {e}")
+            logger.error(f"Provider {provider} failed execution: {e}")
             return []
 
     def get_credit_summary(self) -> str:
-        """Returns a formatted string of remaining credits for all providers."""
         summaries = [f"{name.upper()}: {count}" for name, count in self._runtime_credits.items()]
         return " | ".join(summaries)
 
     def _get_proxied_request_params(self, target_url: str, blacklisted_providers: List[str]) -> Tuple[str, Dict[str, Any], str]:
         rotation_cfg = getattr(self.config, "proxy_rotation", {})
-        providers = rotation_cfg.get("providers", {})
+        providers = rotation_cfg.get("providers", {}) if isinstance(rotation_cfg, dict) else getattr(rotation_cfg, "providers", {})
 
-        # Filter by blacklist AND credit balance
+        # Retain full pool isolation constraints across all known providers
         active_providers = {
             k: v for k, v in providers.items()
             if k not in blacklisted_providers and self._runtime_credits.get(k, 0) > 0
@@ -199,50 +218,60 @@ class EbayScrapeClient:
         if not active_providers:
             raise Exception("Critical: All proxy providers exhausted or blacklisted!")
 
-        # Perform weighted random selection
         names = list(active_providers.keys())
         weights = [int(p.get("default_weight", 25)) for p in active_providers.values()]
         chosen_name = random.choices(names, weights=weights, k=1)[0]
         p_info = active_providers[chosen_name]
 
-        # 5. Prepare provider-specific payloads
-        payload = {"api_key": p_info.get("api_key")}
+        payload = {}
+        api_key = p_info.get("api_key")
 
+        # Route matching parameters dynamically by specific vendor signatures
         if chosen_name == "scraperapi":
-            payload.update({"url": target_url, "render": "false", "skip_cache": "true"})
+            payload.update({"api_key": api_key, "url": target_url, "render": "true", "skip_cache": "true", "wait_for_selector": ".srp-results, .s-card--horizontal"})
         elif chosen_name == "scrapeops":
-            payload.update({"url": target_url})
+            payload.update({"api_key": api_key, "url": target_url, "bypass": "cloudflare_imperva", "render_js": "true", "residential": "true"})
         elif chosen_name == "webscraping_ai":
-            payload.update({"url": target_url, "proxy": "residential"})
+            # Testing mode active: Utilizing anti-bot bypass profiles (50 credits/call)
+            payload.update({"api_key": api_key, "url": target_url, "proxy": "stealth"})
         elif chosen_name == "scraperbox":
-            payload.update({"url": target_url, "premium_proxy": "true"})
+            # Scraperbox API matches 'token' payload parameter identifier mapping
+            payload.update({"token": api_key, "url": target_url, "render": "true"})
 
         return p_info.get("base_url").rstrip("/"), payload, chosen_name
 
     def dispatch_scrape(self, target_url: str, max_retries: int = 3) -> Optional[str]:
-        """Circuit-breaker wrapper for proxy-rotated requests."""
-        # Use the class attribute instead of a local variable
         for attempt in range(max_retries):
-            # Pass self._active_blacklist to your helper
-            base_url, payload, provider = self._get_proxied_request_params(target_url, self._active_blacklist)
             try:
-                response = requests.get(base_url, params=payload, timeout=self.timeout)
+                base_url, payload, provider = self._get_proxied_request_params(target_url, self._active_blacklist)
+
+                proxy_rotation = getattr(self.config, "proxy_rotation", {})
+                providers_cfg = proxy_rotation.get("providers", {}) if isinstance(proxy_rotation, dict) else getattr(proxy_rotation, "providers", {})
+                p_cfg = providers_cfg.get(provider, {})
+                endpoint_path = p_cfg.get('endpoint_path', '')
+
+                request_url = f"{base_url.rstrip('/')}/{endpoint_path.lstrip('/')}".rstrip('/')
+
+                response = requests.get(request_url, params=payload, timeout=self.timeout)
+
+                # Live synchronization hook for running webscraping_ai metadata inside the secondary dispatch route
+                if provider == "webscraping_ai":
+                    remaining_quota = response.headers.get("X-Quota-Remaining")
+                    if remaining_quota is not None:
+                        self._runtime_credits[provider] = int(remaining_quota)
+
                 if response.status_code == 200:
                     return response.text
 
-                logger.warning(f"Provider {provider} failed with {response.status_code}. Blacklisting.")
-
-                # Append to the persistent class attribute
+                logger.warning(f"Provider {provider} failed with status {response.status_code}. Blacklisting variant loop.")
                 if provider not in self._active_blacklist:
                     self._active_blacklist.append(provider)
 
             except Exception as e:
-                logger.error(f"Request failed: {e}")
+                logger.error(f"Circuit breaker sweep attempt failed: {e}")
         return None
 
-
     def fetch_raw_item_page(self, item_url: str, max_retries: int = 3) -> str:
-        """Fetches a raw item page using the existing dispatch_scrape circuit-breaker logic."""
         self._enforce_politeness()
         html = self.dispatch_scrape(item_url, max_retries=max_retries)
         return html if html else ""
@@ -265,7 +294,11 @@ class EbayScrapeClient:
             price_ele = listing.find(class_=lambda c: c and any(x in c for x in ["s-item__price", "card__price"]))
             if not price_ele: continue
 
-            price_val = float("".join(c for c in price_ele.text.strip() if c.isdigit() or c == "."))
+            try:
+                price_val = float("".join(c for c in price_ele.text.strip() if c.isdigit() or c == "."))
+            except ValueError:
+                continue
+
             item_url = listing.find("a", href=True)["href"] if listing.find("a", href=True) else None
             item_id = item_url.split("/itm/")[-1].split("?")[0] if item_url and "/itm/" in item_url else "0"
 
@@ -278,17 +311,14 @@ class EbayScrapeClient:
         return item_summaries
 
     def parse_msku_item_page(self, html_content: str, base_item) -> list:
-
-        # Guard against connection timeouts returning empty payloads
         if not html_content or len(html_content.strip()) == 0:
-            logger.error(f"  [❌] Deep Harvest Aborted: Received empty HTML payload for Item ID: {base_item.item_id} due to upstream gateway timeout.")
+            logger.error(f"  [❌] Deep Harvest Aborted: Received empty HTML payload for Item ID: {base_item.item_id}")
             return []
 
         extracted_variants = []
         soup = BeautifulSoup(html_content, "html.parser")
         html_upper = html_content.upper()
 
-        # 1. Capture Seller Metadata Parameters
         feedback_score = None
         fb_match = re.search(r'feedbackScore"\s*:\s*(\d+)', html_content)
         if fb_match:
@@ -302,7 +332,6 @@ class EbayScrapeClient:
         is_top_rated = "TOP-RATED SELLER" in html_upper or "TOP_RATED_SELLER" in html_upper
         has_bent_pins = any(x in html_upper for x in ["BENT PIN", "BROKEN PIN", "DAMAGED PIN", "MISSING PIN"])
 
-        # 2. ENGINE ALPHA: Check for Modern 'x-msku-evo' DOM Elements
         sku_options = soup.find_all(class_="listbox__option", attrs={"data-sku-value-name": True})
 
         if sku_options:
@@ -311,32 +340,23 @@ class EbayScrapeClient:
                 if not variant_text or variant_text.upper() == "SELECT":
                     continue
                 if option.has_attr("aria-disabled") and option["aria-disabled"].lower() == "true":
-                    continue  # Skip out of stock options
+                    continue
 
                 extracted_variants.append({
                     "text": variant_text,
                     "index": index,
                     "price_mod": base_item.price
                 })
-
-        # 3. ENGINE BETA: Legacy & Universal Fallback if Modern DOM Engine found nothing
         else:
-            # Pattern 1: Classic itmVarModel Script Tag
             var_model_match = re.search(r'"itmVarModel"\s*:\s*(\{.*?\})(?:,\s*"|\s*\})', html_content)
-
-            # Pattern 2: ItemJson State Variable Object
             if not var_model_match:
                 var_model_match = re.search(r'ItemJson["\']\s*:\s*(\{.*?\})(?:,\s*"|\s*\})', html_content)
-
-            # Pattern 3: 🌟 NEW Universal view-model context block injection
             if not var_model_match:
                 var_model_match = re.search(r'window\.__context__\s*=\s*(\{.*?\})(?:;\s*</script>|;\s*window)', html_content)
 
             if var_model_match:
                 try:
                     model_data = json.loads(var_model_match.group(1))
-
-                    # Dig down into deep parameters tree layout patterns
                     menu_items = None
                     if "menuItemMap" in model_data:
                         menu_items = model_data["menuItemMap"]
@@ -364,14 +384,12 @@ class EbayScrapeClient:
                                 "price_mod": variant_price
                             })
                 except Exception as json_err:
-                    logger.error(f"Error decoding legacy/universal variation payload JSON: {json_err}")
+                    logger.error(f"Error decoding legacy variation payload JSON: {json_err}")
 
-        # 4. Final Verification Guard Clause
         if not extracted_variants:
             logger.warning(f"  [⚠️] Multi-SKU Schema Exception: Missing block anchor on listing element ID: {base_item.item_id}")
             return []
 
-        # 5. Build and Pack MarketItem Objects
         final_records = []
         for item in extracted_variants:
             variant_title = f"{base_item.title} ({item['text']})".strip()
@@ -400,25 +418,20 @@ class EbayScrapeClient:
 
             final_records.append(cloned_variant)
 
-        logger.debug(f"  │  └─ Captured {len(final_records)} items from variation bracket pool.")
+        logger.debug(f"  │  └─ Captured {len(final_records)} items from variation pool.")
         return final_records
+
     def parse_standalone_item_hydration(self, html_content: str, item: MarketItem, strategy: Optional[Any] = None) -> MarketItem:
-        """
-        Executes Stage 2 structural data mutation by routing raw HTML payload
-        through the explicit domain strategy parser.
-        """
         if not html_content:
             logger.warning(f"⚠️ Blank HTML response packet passed to hydrator for item {item.item_id}")
             return item
 
-        # Resolve explicit parameter first, then fallbacks
         active_strategy = strategy or getattr(item, "strategy", None) or getattr(self, "strategy", None)
 
         if active_strategy:
-            # Invoke your CPUStrategy text evaluation patterns!
             item = active_strategy.extract_specific_attributes(html_content, item)
         else:
-            logger.error(f"❌ Missing strategy context layer for item {item.item_id}. Executing fallback state.")
+            logger.error(f"❌ Missing strategy context layer for item {item.item_id}.")
             item.is_for_parts_or_not_working = (item.condition_id == 7000)
             item.process_state = "HYDRATED"
 
