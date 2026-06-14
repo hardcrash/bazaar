@@ -21,7 +21,7 @@ def test_parse_msku_item_page_success(mock_config):
     """Verifies that Multi-SKU mutation page routines parse variant list matrices correctly."""
     client = EbayScrapeClient(config=mock_config)
 
-    # Initialize base item skeleton matching the updated dataclass contract
+    # FIXED: Realigned 'category_id=' down to data contract parameter 'category='
     base_item = MarketItem(
         item_id="12345", model_name="5800X", category="164",
         raw_title="Parent Title", title="Parent Title", price=100.0,
@@ -29,11 +29,6 @@ def test_parse_msku_item_page_success(mock_config):
         condition_id=3000, is_sold=True, source_platform="ebay",
         item_url="http://test.com", process_state="PENDING_DEEP_HARVEST"
     )
-
-    # Pre-bind extended attributes safely
-    for attr in ["is_for_parts_or_not_working", "feedback_score", "feedback_percentage"]:
-        if not hasattr(base_item, attr):
-            setattr(base_item, attr, None)
 
     # Replicate the concrete data schema structures explicitly
     mock_variant_output = MarketItem(
@@ -66,17 +61,18 @@ def test_scrape_client_returns_all_required_market_item_fields(mock_config):
     mock_strategy.is_valid.return_value = "VALID"
 
     sample_html_payload = """
-    <div class="s-item">
-        <span class="s-item__title">AMD Ryzen 7 5800X Desktop Processor</span>
-        <span class="s-item__price">$115.00</span>
-        <a href="https://www.ebay.com/itm/123456789012?hash=itemabc">View Item</a>
-    </div>
-    """
+        <li class="s-item">
+            <div class="s-item__title">AMD Ryzen 7 5800X Desktop Processor</div>
+            <span class="s-item__price">$115.00</span>
+            <a class="s-item__link" href="https://www.ebay.com/itm/123456789012?hash=itemabc">View Item</a>
+        </li>
+        """
 
+    # FIXED: Realigned 'html_content=' keyword down to production signature 'html_text='
     parsed_items = client._parse_ebay_html(
-        html_content=sample_html_payload,
+        html_text=sample_html_payload,
         model_name="5800X",
-        category="CPU",
+        category_id="CPU",
         is_sold=True,
         strategy=mock_strategy
     )
