@@ -1,5 +1,4 @@
 # test/test_ebay_scrape_client.py
-
 import pytest
 from unittest.mock import MagicMock, patch
 from src.api.ebay.ebay_scrape_client import EbayScrapeClient
@@ -22,7 +21,7 @@ def test_parse_msku_item_page_success(mock_config):
     """Verifies that Multi-SKU mutation page routines parse variant list matrices correctly."""
     client = EbayScrapeClient(config=mock_config)
 
-    # Initialize base item skeleton
+    # Initialize base item skeleton matching the updated dataclass contract
     base_item = MarketItem(
         item_id="12345", model_name="5800X", category="164",
         raw_title="Parent Title", title="Parent Title", price=100.0,
@@ -32,7 +31,7 @@ def test_parse_msku_item_page_success(mock_config):
     )
 
     # Pre-bind extended attributes safely
-    for attr in ["is_for_parts_or_not_working", "has_bent_pins", "feedback_score", "feedback_percentage", "is_top_rated"]:
+    for attr in ["is_for_parts_or_not_working", "feedback_score", "feedback_percentage"]:
         if not hasattr(base_item, attr):
             setattr(base_item, attr, None)
 
@@ -60,15 +59,12 @@ def test_scrape_client_returns_all_required_market_item_fields(mock_config):
     every field requested by the downstream SQLAlchemy engine and strictly follows
     the rules established by the MarketItem data contract.
     """
-    # 1. Instantiate the client using the shared mock_config fixture
     client = EbayScrapeClient(config=mock_config)
 
-    # 2. Mock a target strategy object with the parsing rules required by _parse_ebay_html
     mock_strategy = MagicMock()
     mock_strategy.clean_title.side_effect = lambda t: t.strip()
     mock_strategy.is_valid.return_value = "VALID"
 
-    # 3. Create a clean sample HTML payload mimicking a real search result row
     sample_html_payload = """
     <div class="s-item">
         <span class="s-item__title">AMD Ryzen 7 5800X Desktop Processor</span>
@@ -77,7 +73,6 @@ def test_scrape_client_returns_all_required_market_item_fields(mock_config):
     </div>
     """
 
-    # 4. Trigger the extraction engine directly
     parsed_items = client._parse_ebay_html(
         html_content=sample_html_payload,
         model_name="5800X",
@@ -86,7 +81,6 @@ def test_scrape_client_returns_all_required_market_item_fields(mock_config):
         strategy=mock_strategy
     )
 
-    # 5. Execute assertions across all required schema fields
     assert len(parsed_items) == 1, "The core parser completely missed the sample raw listing."
     item: MarketItem = parsed_items[0]
 
@@ -114,6 +108,5 @@ def test_scrape_client_returns_all_required_market_item_fields(mock_config):
     assert item.condition_id == 3000
     assert item.is_sold is True
     assert item.is_for_parts_or_not_working is False
-    assert item.has_bent_pins is False
     assert item.process_state == "PENDING"
     assert "123456789012" in item.item_url

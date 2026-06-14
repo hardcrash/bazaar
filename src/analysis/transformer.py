@@ -22,15 +22,19 @@ class MarketItemTransformer:
         if shipping_options and isinstance(shipping_options, list):
             shipping_val = shipping_options[0].get("shippingCost", {}).get("value", "0.0")
 
+        # Safely capture raw condition from JSON before numeric type casting
+        raw_cond = item_json.get("conditionId")
+        cond_val = int(raw_cond) if str(raw_cond).isdigit() else condition_id
+
         flattened_data = {
             "itemId": item_json.get("itemId"),
             "title": item_json.get("title", ""),
             "price": str(price_obj.get("value", "0.0")),
             "shippingCost": str(shipping_val),
-            "conditionId": int(item_json.get("conditionId", condition_id)),
+            "conditionId": cond_val,
             "sellerUser": seller_info.get("username", "UNKNOWN_SELLER"),
-            "feedbackScore": int(seller_info.get("feedbackScore", 0) or 0),
-            "positiveFeedbackPercent": float(seller_info.get("positiveFeedbackPercent", 0.0) or 0.0)
+            "feedbackScore": int(seller_info.get("feedbackScore") or 0),
+            "positiveFeedbackPercent": float(seller_info.get("positiveFeedbackPercent") or 0.0)
         }
 
         # 2. Channel data through the Pydantic Sanitation Layer Gatekeeper
@@ -41,9 +45,13 @@ class MarketItemTransformer:
             raise validation_err
 
         # 3. Safely map pristine data directly to our standardized tracking model
-        # Explicit numeric typing casts here are bulletproof because Pydantic pre-verified them.
-        price_num = float(sanitized_payload.price_string)
-        shipping_num = float(sanitized_payload.shipping_string)
+        # Try both common attribute schemas dynamically (string or float variants)
+        price_num = float(getattr(sanitized_payload, "price_string", getattr(sanitized_payload, "price", 0.0)))
+        shipping_num = float(getattr(sanitized_payload, "shipping_string", getattr(sanitized_payload, "shippingCost", 0.0)))
+
+        # Handle fallback for uniform array structure expected by down-funnel components
+        img_url = image_info.get("imageUrl")
+        image_urls_list = [img_url] if img_url else []
 
         return MarketItem(
             item_id=sanitized_payload.item_id,
@@ -64,5 +72,7 @@ class MarketItemTransformer:
             item_end_date=item_json.get("itemEndDate"),
             seller_username=sanitized_payload.seller_username,
             feedback_score=sanitized_payload.feedback_score,
-            image_url=image_info.get("imageUrl")
+            feedback_percentage=getattr(sanitized_payload, "positive_feedback_percent", None),
+            image_urls=image_urls_list,
+            process_state="PENDING"
         )

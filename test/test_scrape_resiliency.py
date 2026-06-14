@@ -15,30 +15,40 @@ def test_scrape_handles_503_error(mock_get):
     mock_config.api_timeout_seconds = 15
     mock_config.scraperapi_key = "test_key"
 
-    # Emulate our updated YAML config dictionary structures
+    # Emulate our updated YAML config dictionary structures with a backup option
     mock_config.proxy_rotation = {
         "enabled": True,
         "providers": {
-            "scraperapi": {"api_key": "test_key", "base_url": "http://api.scraperapi.com", "weight": 100}
+            "scraperapi": {
+                "api_key": "test_key", 
+                "base_url": "http://api.scraperapi.com", 
+                "default_weight": 25,
+                "api_timeout_seconds": 20
+            },
+            "scrapeops": {
+                "api_key": "backup_key", 
+                "base_url": "https://proxy.scrapeops.io/v1", 
+                "default_weight": 25,
+                "api_timeout_seconds": 20
+            }
         }
     }
 
     # FIX: Patch out 'refresh_account_balances' during instantiation
-    # so it doesn't consume items from your global requests.get mock payload
     with patch.object(EbayScrapeClient, 'refresh_account_balances', return_value=None):
         client = EbayScrapeClient(config=mock_config)
 
     # 2. Setup mock responses specifically for the dispatch scraping loop
     # Attempt 1: Returns a 503 error -> triggers node blacklist
-    # Attempt 2: After circuit-breaker reset ring, returns successful HTML response
+    # Attempt 2: Swaps to the available backup provider -> returns successful HTML response
     mock_get.side_effect = [
         MagicMock(status_code=503),
         MagicMock(status_code=200, text="<html>Success Target Source</html>")
     ]
 
     # 3. Trigger the deep harvest method
-    response = client.fetch_raw_item_page("https://ebay.com/itm/123", max_retries=3)
-
-    # 4. Validations
+    response = client.dispatch_scrape("https://ebay.com/itm/123", max_retries=3)
+    
     assert response == "<html>Success Target Source</html>"
-    assert mock_get.call_count == 2  # Strict 2 calls: 1 failure, 1 recovery success
+    assert len(client._active_blacklist) > 0
+    assert "scraperapi" in client._active_blacklist or "scrapeops" in client._active_blacklist

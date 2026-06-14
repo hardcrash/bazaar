@@ -1,6 +1,7 @@
 # src/analysis/strategy/cpu_strategy.py
+
 import re
-from src.analysis.strategy.base_strategy import BaseCategoryStrategy
+from src.analysis.strategy.base_category_strategy import BaseCategoryStrategy
 from src.core.models import MarketItem
 
 class BaseCPUStrategy(BaseCategoryStrategy):
@@ -16,8 +17,10 @@ class BaseCPUStrategy(BaseCategoryStrategy):
             target_canonical = target.replace(" ", "").upper()
             compiled_list = []
             for v in variants:
-                # Create a regex: 5\s*8\s*0\s*0\s*X (matches 5800X, 5 8 0 0 X, etc.)
+                # 🛠️ BUG FIX: Escape each character first, THEN join them with \s*
                 pattern = r"\s*".join(re.escape(char) for char in v)
+                # Ensure the loose whitespace check matches bounding word limits
+                pattern = r"\b" + pattern + r"\b"
                 compiled_list.append((v, re.compile(pattern, re.IGNORECASE)))
             self.variant_regexes[target_canonical] = compiled_list
 
@@ -68,13 +71,47 @@ class BaseCPUStrategy(BaseCategoryStrategy):
         return "VALID"
 
     def extract_specific_attributes(self, html_content: str, item: MarketItem) -> MarketItem:
-        item.has_bent_pins = any(q.lower() in html_content.lower() for q in self.config.get("defect_queries", []))
+        """Parses raw leaf-node description HTML to evaluate and flag potential
+        hardware defect indicators such as bent processor pins or general failures.
+        """
+        html_lower = html_content.lower()
+
+        # Evaluate dynamic defect queries from config
+        defect_queries = self.config.get("defect_queries", ["bent", "broken", "parts only"])
+        has_defect = any(q.lower() in html_lower for q in defect_queries)
+
+        # Specific target patterns matching your DB schema fields
+        has_bent_pins = "bent pin" in html_lower or "bent pins" in html_lower
+        is_parts_only = item.condition_id == 7000 or "parts only" in html_lower
+
+        # Mutate flags into dataclass properties safely
+        item.is_for_parts_or_not_working = is_parts_only or has_defect
+        item.has_bent_pins = has_bent_pins
+        item.process_state = "HYDRATED"
+
         return item
 
     def is_valid_standalone(self, item: MarketItem) -> bool:
         return "combo" not in item.title.lower()
 
-# ActiveCPUStrategy and HistoricalCPUStrategy remain unchanged as you had them...
+
+    def get_price_brackets(self, pass_type: str = "used") -> list[tuple[float, float]]:
+        harvest = self.config.get("historical_harvest", {})
+
+        # Determine which YAML keys to use based on the pass type
+        prefix = "broken" if pass_type == "broken" else "used"
+        min_p = float(harvest.get(f"min_price_{prefix}", 110.0))
+        max_p = float(harvest.get(f"max_price_{prefix}", 140.0))
+        step = float(harvest.get("step_size", 5.0))
+
+        brackets = []
+        current = min_p
+        while current < max_p:
+            upper = min(current + step, max_p)
+            brackets.append((current, upper))
+            current += step
+        return brackets
+
 
 class ActiveCPUStrategy(BaseCPUStrategy):
     @property
@@ -90,7 +127,6 @@ class ActiveCPUStrategy(BaseCPUStrategy):
     def step_size(self) -> float:
         return float(self.config.get("active_harvest", {}).get("step_size", 10.0))
 
-    # 🌟 Satisfies BaseCategoryStrategy abstract constraint cleanly
     @property
     def max_price_cap(self) -> float:
         _, max_p = self.price_bounds
@@ -111,8 +147,8 @@ class HistoricalCPUStrategy(BaseCPUStrategy):
     def step_size(self) -> float:
         return float(self.config.get("historical_harvest", {}).get("step_size", 10.0))
 
-    # 🌟 Satisfies BaseCategoryStrategy abstract constraint cleanly
     @property
     def max_price_cap(self) -> float:
         _, max_p = self.price_bounds
         return max_p
+

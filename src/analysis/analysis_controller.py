@@ -2,32 +2,26 @@
 
 import time
 from loguru import logger
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from src.analysis.strategy.analysis_strategy_factory import AnalysisStrategyFactory
 from src.api.ebay.ebay_scrape_client import EbayScrapeClient
+from src.core.models import MarketItem
 from src.database.db_manager import DatabaseManager
+from src.database.models import MarketItemModel
 
 class AnalysisController:
     def __init__(self, config, category: str = "CPU"):
         self.config_data = config
         self.category_name = category.upper()
 
-        # 1️⃣ Core Sourcing Client Engine
         self.scrape_client = EbayScrapeClient(config=config)
-
-        # 2️⃣ Hydrate relational persistence data store dependency
+        # Structural Database Orchestrator Layer
         self.db_manager = DatabaseManager(config=config)
-
-        # 3️⃣ Hydrate automated baseline analytics tracking service
-        # If your class is initialized slightly differently, adjust it here.
-        # self.analytics_service = HistoricalAggregatorService(config=config)
         self.analytics_service = getattr(self, "analytics_service", None)
 
     def run_harvest(self,
                     query: Optional[str] = None,
-                    min_price: Optional[float] = None,
-                    max_price: Optional[float] = None,
                     category_id: Optional[str] = None,
                     model_name: Optional[str] = None,
                     strategy: Optional[Any] = None,
@@ -37,149 +31,214 @@ class AnalysisController:
         credits = self.scrape_client.get_credit_summary()
         logger.info(f"⚡ Proxy Gateway Status: {credits}")
 
-        """
-        Executes a complete 2-Stage data harvest sweep.
-        Leverages AnalysisStrategyFactory to dynamically instantiate the operational rules layer.
-        """
         start_time = time.perf_counter()
-
         harvest_mode = kwargs.get("mode", "historical")
         is_dry_run = kwargs.get("dry_run", False)
 
-        # Resolve strategies cleanly via your Factory pattern
         if strategy is None:
-            logger.debug(f"Factory resolving strategy matrix for category: {self.category_name} [{harvest_mode.upper()}]")
             strategy = AnalysisStrategyFactory.get_strategy(
                 category_key=self.category_name,
                 mode=harvest_mode,
                 config=self.config_data
             )
 
-        # Hydrate defaults from strategy rules boundaries if parameters aren't given explicitly
+        # ------------------------------------------------------------------
+        # Dynamic Configuration and Sourcing Identification Setup
+        # ------------------------------------------------------------------
         model_name = model_name or "5800X"
         category_id = category_id or (strategy.category_id if hasattr(strategy, 'category_id') else "164")
-        query = query or "Ryzen 5800X -BUNDLE -LAPTOP -PC -BAREBONES -SYSTEM -OPTANE -P4800X -P5800X -METER -RADIO"
 
-        if min_price is None or max_price is None:
-            bounds = getattr(strategy, "price_bounds", (115.00, 650.00))
-            min_price = min_price if min_price is not None else bounds[0]
-            max_price = max_price if max_price is not None else bounds[1]
+        # Build search format target query dynamically if not explicitly injected
+        if not query:
+            fmt = strategy.config.get("search_format", "Ryzen {model}")
+            base_query = fmt.format(model=model_name)
+            exclusions = " ".join([f"-{word}" for word in strategy.config.get("blacklist_words", [])])
+            query = f"{base_query} {exclusions}".strip()
+
+        # ------------------------------------------------------------------
+        # Build Dual-Pass Target Ranges Loop from Strategy Context
+        # ------------------------------------------------------------------
+        target_passes = []
+        harvest_cfg = strategy.config.get(f"{harvest_mode}_harvest", {})
+        conditions_configured = harvest_cfg.get("ebay_condition", [2000, 3000, 7000])
+
+        if harvest_mode == "historical":
+            # Pass A: Broken / Parts Only
+            if 7000 in conditions_configured:
+                for min_p, max_p in strategy.get_price_brackets():
+                    target_passes.append({
+                        "name": "BROKEN/PARTS_ONLY",
+                        "conditions": [7000],
+                        "min_p": min_p,
+                        "max_p": max_p
+                    })
+
+            # Pass B: Used / Refurbished
+            functional_conds = [c for c in conditions_configured if c != 7000]
+            if functional_conds:
+                for min_p, max_p in strategy.get_price_brackets():
+                    target_passes.append({
+                        "name": "USED/REFURBISHED_BASELINE",
+                        "conditions": functional_conds,
+                        "min_p": min_p,
+                        "max_p": max_p
+                    })
+        else:
+            # Standard active sweep
+            for min_p, max_p in strategy.get_price_brackets():
+                target_passes.append({
+                    "name": f"{harvest_mode.upper()}_UNIFORM_SWEEP",
+                    "conditions": conditions_configured,
+                    "min_p": min_p,
+                    "max_p": max_p
+                })
 
         logger.info(f"Launching [LIVE MUTATION RUN] [{harvest_mode.upper()}] Harvesting Sweep for category: {self.category_name}")
         if is_dry_run:
             logger.warning("🧪 Dry Run mode flag active! Database write operations will be simulated.")
 
-        logger.info(f"Targeting Query: '{query}' | Category ID: {category_id}")
-        logger.debug(f"Slicing Bracket Range: ${min_price:.2f} to ${max_price:.2f}")
+        all_collected_summaries = []
 
-        # ------------------------------------------------------------------
-        # PRE-FLIGHT CAPA_CITY GUARD: Verify provider credit telemetry limits
-        # ------------------------------------------------------------------
-        if harvest_mode == "historical" and hasattr(self.scrape_client, "get_remaining_credits"):
-            account_check = self.scrape_client.get_remaining_credits()
-            if account_check.get("status") == "SUCCESS":
-                remaining = account_check.get("remaining", 0)
-                if remaining < 50:
-                    logger.critical(f"🚨 CRITICAL: ScraperAPI capacity exhausted ({remaining} left)! Aborting execution window.")
-                    return {"status": "INSUFFICIENT_CREDITS", "inserted_records": 0, "total_processed": 0}
+        # Execute Multi-Pass Sourcing Matrix
+        for p_idx, target in enumerate(target_passes):
+            logger.info(f"🔄 Sourcing Pass [{p_idx + 1}/{len(target_passes)}]: {target['name']}")
+            logger.info(f"Targeting Query: '{query}' | Category ID: {category_id}")
+            logger.debug(f"📐 Boundaries: ${target['min_p']:.2f} to ${target['max_p']:.2f} | Filter Conditions: {target['conditions']}")
+            logger.debug(f"🔍 Dispatching Search | Range: {target['min_p']}-{target['max_p']} | Condition: {target['conditions']}")
+
+            pass_summaries = self.scrape_client.search_historical_sales(
+                query=query,
+                min_price=target['min_p'],
+                max_price=target['max_p'],
+                category_id=category_id,
+                model_name=model_name,
+                strategy=strategy,
+                conditions=target['conditions']
+            )
+
+            if pass_summaries:
+                logger.success(f"📈 Pass '{target['name']}' successfully captured {len(pass_summaries)} raw inventory matches.")
+                all_collected_summaries.extend(pass_summaries)
             else:
-                logger.warning("⚠️ Could not verify credit balance parameters. Proceeding at risk...")
+                logger.warning(f"⚠️ Pass '{target['name']}' returned 0 items inside bracket boundary.")
 
-        # ------------------------------------------------------------------
-        # STAGE 1: Search Scrape / Initial Inventory Assessment
-        # ------------------------------------------------------------------
-        raw_summaries = self.scrape_client.search_historical_sales(
-            query=query,
-            min_price=min_price,
-            max_price=max_price,
-            category_id=category_id,
-            model_name=model_name,
-            strategy=strategy
-        )
-
-        if not raw_summaries:
-            logger.warning(f"⚠️ Stage 1 returned 0 raw matching summaries for pattern '{model_name}'. Terminating pipeline early.")
+        if not all_collected_summaries:
+            logger.critical("❌ All execution loops returned zero sets. Aborting hydration pipeline.")
             return {"status": "EMPTY", "inserted_records": 0, "total_processed": 0}
 
-        logger.debug(f"Captured {len(raw_summaries)} items from slice bracket pool.")
+        logger.debug(f"Combined total of {len(all_collected_summaries)} items captured across all passes.")
 
-        standard_items = [item for item in raw_summaries if item.process_state != "PENDING_DEEP_HARVEST"]
-        msku_items = [item for item in raw_summaries if item.process_state == "PENDING_DEEP_HARVEST"]
+        # ------------------------------------------------------------------
+        # API CALL SAFETY FILTER: Keep calls down by removing existing IDs
+        # ------------------------------------------------------------------
+        unseen_items = self.filter_new_items(all_collected_summaries)
+        skipped_count = len(all_collected_summaries) - len(unseen_items)
+        if skipped_count > 0:
+            logger.info(f"🔒 API Call Protection Guard: Skipped deep checking for {skipped_count} items already present in DB.")
+
+        if not unseen_items:
+            logger.success("✨ All captured sweep items match historical records. No credit expenditures needed!")
+            return {"status": "SUCCESS", "inserted_records": 0, "total_processed": len(all_collected_summaries)}
+
+        standard_items = [item for item in unseen_items if item.process_state != "PENDING_DEEP_HARVEST"]
+        msku_items = [item for item in unseen_items if item.process_state == "PENDING_DEEP_HARVEST"]
 
         final_items_to_commit = []
-        final_items_to_commit.extend(standard_items)
 
         # ------------------------------------------------------------------
-        # STAGE 2: Multi-SKU Deep Variation Extraction Loop
+        # STAGE 2: Standalone Deep Description Hydration
         # ------------------------------------------------------------------
-        if msku_items:
-            logger.info(f"Stage 2 Deep Harvesting: Processing {len(msku_items)} multi-variation listings...")
-            for base_item in msku_items:
-                logger.debug(f"Processing Multi-Sku Matrix for Item ID: {base_item.item_id}")
-                html_leaf = self.scrape_client.fetch_raw_item_page(base_item.item_url)
-                if html_leaf:
-                    variants = self.scrape_client.parse_msku_item_page(html_leaf, base_item)
-                    if variants:
-                        final_items_to_commit.extend(variants)
-                else:
-                    logger.warning(f"Failed to fetch product details view for parent listing container: {base_item.item_id}")
-                    base_item.process_state = "PENDING"
+        if standard_items:
+            logger.info(f"Hydrating {len(standard_items)} standalone item descriptions...")
+            for base_item in standard_items:
+
+                # Check custom strategy rules before hitting proxies
+                if hasattr(strategy, 'is_valid_standalone') and not strategy.is_valid_standalone(base_item):
+                    logger.warning(f"⏩ Strategy Filter: Dropping item {base_item.item_id} based on validation rules.")
+                    continue
+
+                try:
+                    html_leaf = self.scrape_client.fetch_raw_item_page(base_item.item_url)
+
+                    if html_leaf:
+                        hydrated_item = self.scrape_client.parse_standalone_item_hydration(
+                            html_leaf, base_item, strategy=strategy
+                        )
+                        final_items_to_commit.append(hydrated_item)
+                    else:
+                        logger.warning(f"Leaf fetch missed for item {base_item.item_id}. Retaining basic record.")
+                        base_item.process_state = "PENDING"
+                        final_items_to_commit.append(base_item)
+
+                except RuntimeError as net_err:
+                    # 🛡️ FIXED CRITICAL GUARD ORDER: Catch specific RuntimeError BEFORE generic Exception
+                    if str(net_err) == "ALL_PROXY_PROVIDERS_DOWN":
+                        logger.error("🛑 Proxy gateway cluster reported absolute depletion. Saving collected rows.")
+                        break
+                    raise net_err
+
+                except Exception as leaf_err:
+                    logger.error(f"⚠️ Failed to process leaf page {base_item.item_id}: {leaf_err}")
+                    base_item.process_state = "ERROR"
                     final_items_to_commit.append(base_item)
 
         # ------------------------------------------------------------------
-        # STAGE 3: Database Commit & Real-Time Reporting
+        # STAGE 2.5: Multi-SKU Items Routing Block
         # ------------------------------------------------------------------
-        total_discovered = len(final_items_to_commit)
-        actual_new_inserts = 0
-        ignored_duplicates = total_discovered
+        if msku_items:
+            logger.info(f"📦 Routing {len(msku_items)} Multi-SKU parent items straight to commit queue...")
+            final_items_to_commit.extend(msku_items)
 
-        if is_dry_run:
-            logger.info(f"💾 [DRY RUN] Would have committed {total_discovered} verified items down to tracking store.")
+        # ------------------------------------------------------------------
+        # STAGE 3: Structural Database Persistent Layer Execution
+        # ------------------------------------------------------------------
+        if not final_items_to_commit:
+            logger.warning("⚠️ No finalized items generated for database ingestion phase.")
+            return {"status": "NO_OP", "inserted_records": 0, "total_processed": len(all_collected_summaries)}
+
+        inserted_counter = 0
+
+        if not is_dry_run:
+            try:
+                logger.info(f"💾 Sending {len(final_items_to_commit)} items to database persistence layer...")
+
+                # Satisfy the legacy `db_conn_unused` positional parameter by passing None
+                inserted_counter = self.db_manager.commit_market_items(None, final_items_to_commit)
+
+                logger.success(f"🎉 Successfully committed {inserted_counter} entries to records.")
+            except Exception as db_err:
+                logger.critical(f"🚨 Persistence Engine crash during transaction block: {db_err}")
+                raise db_err
         else:
-            logger.info(f"💾 Committing {total_discovered} verified items down to relational tracking store...")
-            # Fire data array down through your SQLAlchemy / SQLite manager layer
-            actual_new_inserts = self.db_manager.commit_market_items(None, final_items_to_commit)
-            ignored_duplicates = total_discovered - actual_new_inserts
+            logger.warning(f"🧪 [DRY RUN ACTIVE] Bypassed persisting {len(final_items_to_commit)} items to disk.")
+            inserted_counter = len(final_items_to_commit)
 
-            logger.success(
-                f"💾 Ingestion complete. Inserted {actual_new_inserts} new records "
-                f"({ignored_duplicates} duplicate index keys safely ignored)."
-            )
-
-        # ------------------------------------------------------------------
-        # STAGE 4: Analytics Refresh Pipeline Trigger
-        # ------------------------------------------------------------------
-        if self.analytics_service and hasattr(self.analytics_service, 'update_historical_baselines'):
-            logger.info("📊 Re-calculating statistical rolling data segments...")
-            stat_windows = self.analytics_service.update_historical_baselines(model_name=model_name, category_id=category_id)
-            logger.info(f"      └── {model_name}: Calculated {stat_windows} statistic windows.")
-        else:
-            logger.debug("📊 Analytics calculation service skipped (not instantiated or verified yet).")
-
-        elapsed_seconds = time.perf_counter() - start_time
-        minutes, seconds = divmod(elapsed_seconds, 60)
-
-        logger.success(
-            f"📊 [{self.category_name}] HARVESTING PIPELINE SUMMARY - "
-            f"Time: {int(minutes)}m {seconds:.2f}s | "
-            f"Total Target Items Found: {len(raw_summaries)} | "
-            f"MSKUs Expanded: {len(msku_items)} -> {total_discovered - len(standard_items)} variants | "
-            f"DB New Rows Inserted: {actual_new_inserts}"
-        )
+        execution_duration = time.perf_counter() - start_time
+        logger.info(f"⏱️ Harvest workflow complete in {execution_duration:.2f} seconds.")
 
         return {
             "status": "SUCCESS",
-            "inserted_records": actual_new_inserts,
-            "ignored_records": ignored_duplicates,
-            "total_processed": total_discovered
+            "inserted_records": inserted_counter,
+            "total_processed": len(all_collected_summaries)
         }
 
-    def filter_new_items(self, scraped_items: List[MarketItem]) -> List[MarketItem]:
-        existing_ids = {row.item_id for row in self.db_session.query(MarketItem.item_id).all()}
-        return [item for item in scraped_items if item.item_id not in existing_ids]
 
+    def filter_new_items(self, items: List[Any]) -> List[Any]:
+        """Queries the database to identify which items are new or require update."""
+        if not items:
+            return []
 
-    def get_credit_summary(self) -> str:
-        """Returns a formatted string of remaining credits for all providers."""
-        summaries = [f"{name.upper()}: {count}" for name, count in self._runtime_credits.items()]
-        return " | ".join(summaries)
+        item_ids = [item.item_id for item in items]
+        existing_ids = self.db_manager.get_existing_item_ids(item_ids)
+
+        return [item for item in items if item.item_id not in existing_ids]
+
+    def generate_price_brackets(min_p, max_p, step=30):
+        # This will create [110, 140] if your step is 30
+        brackets = []
+        current = min_p
+        while current < max_p:
+            upper = min(current + step, max_p)
+            brackets.append((current, upper))
+            current += step
+        return brackets

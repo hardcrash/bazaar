@@ -1,7 +1,8 @@
 # src/database/models.py
+
 import json
-import datetime
-from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime, Index, PrimaryKeyConstraint, TypeDecorator
+from datetime import datetime, timezone
+from sqlalchemy import Column, String, Float, Integer, Boolean, DateTime, Index, PrimaryKeyConstraint, TypeDecorator, func
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -10,16 +11,16 @@ class JSONEncodedList(TypeDecorator):
     """Safely converts Python lists to JSON strings for SQLite storage and back again."""
     impl = String
 
-    def process_bind_param(self, value, dialect):
+    def process_bind_param(self, value, dialect, **kwargs):
         if value is not None:
             return json.dumps(value)
         return None
 
-    def process_result_value(self, value, dialect):
+    def process_result_value(self, value, dialect, **kwargs):
         if value is not None:
             try:
                 return json.loads(value)
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, TypeError):
                 return []
         return []
 
@@ -56,22 +57,22 @@ class MarketItemModel(Base):
 
     # Structural Attributes & Catalog Codes
     epid = Column(String, nullable=True)
-    buying_options = Column(JSONEncodedList, nullable=True)  # 🌟 Automatically serializes lists smoothly!
+    buying_options = Column(String, nullable=True, default="Buy It Now")
     quantity_sold = Column(Integer, default=1)
-    bid_count = Column(Integer, nullable=True)
+    bid_count = Column(Integer, default=0, nullable=True)
 
     # Temporal Velocity Counters
-    item_start_date = Column(DateTime, nullable=True)
-    item_end_date = Column(DateTime, nullable=True)
+    item_start_date = Column(String, nullable=True)
+    item_end_date = Column(String, nullable=True)
     date_listed = Column(DateTime, nullable=True)
-    date_fetched = Column(DateTime, default=lambda: datetime.datetime.now(datetime.UTC))  # Fixed deprecation warning
+    date_fetched = Column(DateTime, server_default=func.now(), default=lambda: datetime.now(timezone.utc))
 
     # Assets & Pipeline State Management
-    image_url = Column(String, nullable=True)
+    image_urls = Column(JSONEncodedList, nullable=True)
     item_url = Column(String, nullable=True)
     process_state = Column(String, default="PENDING", index=True)
 
-    # AI agent parameters
+    # AI Agent Parameters
     is_parsed_by_agent = Column(Boolean, default=False)
 
     __table_args__ = (
@@ -94,38 +95,12 @@ class HistoricalMetricModel(Base):
     avg_shipping_cost = Column(Float, default=0.0)
     avg_total_cost = Column(Float, default=0.0)
 
-    last_updated = Column(DateTime, default=lambda: datetime.datetime.now(datetime.UTC), onupdate=lambda: datetime.datetime.now(datetime.UTC))
+    last_updated = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=lambda: datetime.now(timezone.utc)
+    )
 
     __table_args__ = (
         PrimaryKeyConstraint('model_name', 'timeframe', 'condition_type'),
     )
-
-def insert_harvested_item(self, market_item_obj):
-        """Accepts a MarketItem object, converts it to an ORM record, and commits it."""
-        session = self.SessionLocal()
-        try:
-            # Flatten dataclass/object into dictionary attributes
-            data = market_item_obj.__dict__.copy()
-
-            # Identify valid database column keys
-            model_columns = MarketItemModel.__table__.columns.keys()
-
-            # Separate core attributes from strategy-specific anomalies
-            core_data = {k: v for k, v in data.items() if k in model_columns}
-            extra_data = {k: v for k, v in data.items() if k not in model_columns}
-
-            # If your schema doesn't have a metadata_fields column,
-            # this extra_data can just be ignored or logged.
-            if extra_data and "metadata_fields" in model_columns:
-                core_data["metadata_fields"] = extra_data
-
-            # Upsert behavior: Inserts if new, updates if matching primary key 'item_id'
-            db_item = MarketItemModel(**core_data)
-            session.merge(db_item)
-            session.commit()
-
-        except Exception as e:
-            session.rollback()
-            raise e
-        finally:
-            session.close()

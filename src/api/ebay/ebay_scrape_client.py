@@ -13,21 +13,20 @@ from src.analysis.strategy.cpu_strategy import BaseCPUStrategy
 
 class EbayScrapeClient:
     def __init__(self, config):
-        """Initializes the eBay Scraping Client with credit-aware runtime weighting properties."""
         self.config = config
-        if isinstance(config, dict):
-            self.timeout = config.get("api_timeout_seconds", 30)
-        else:
-            self.timeout = getattr(config, "api_timeout_seconds", 30)
-
+        self.timeout = getattr(config, "api_timeout_seconds", 30)
         self.last_request_time = time.perf_counter() - 10.0
         self.min_wait = 1.0
         self.max_wait = 3.0
 
+        self._active_blacklist: List[str] = []
+
+        # Updated Provider Pool
         self._runtime_credits: Dict[str, int] = {
             "scraperapi": 5000,
             "scrapeops": 1000,
-            "zenrows": 1000
+            "scraperbox": 1000,
+            "webscraping_ai": 1000
         }
         self.refresh_account_balances()
 
@@ -93,68 +92,93 @@ class EbayScrapeClient:
             except Exception as e:
                 logger.warning(f"Could not fetch live credits for {name}: {type(e).__name__} - {e}")
 
-    def search_historical_sales(self, query: str, min_price: float, max_price: float, category_id: str, model_name: str, strategy: BaseCPUStrategy) -> List[MarketItem]:
-        """Harvests historical sales using explicit typed parameter payloads to prevent gateway 400 rejections."""
+    def search_historical_sales(
+        self,
+        query: str,
+        min_price: float,
+        max_price: float,
+        category_id: str,
+        model_name: str,
+        strategy: BaseCPUStrategy,
+        conditions: Optional[List[int]] = None
+    ) -> List[MarketItem]:
         self._enforce_politeness()
 
         # 1. Construct Target URL
         cleaned_query = " ".join(query.split())
         encoded_query = requests.utils.quote(cleaned_query)
         target_ebay_url = f"https://www.ebay.com/sch/i.html?_nkw={encoded_query}&LH_Sold=1&LH_Complete=1&_ipg=100&_sop=13"
+
         if category_id and str(category_id).lower() != "global root":
             target_ebay_url += f"&_sacat={category_id}"
+
         target_ebay_url += f"&_udlo={min_price}&_udhi={max_price}"
+        if conditions:
+            condition_str = ",".join(map(str, conditions))
+            target_ebay_url += f"&LH_ItemCondition={condition_str}"
 
         # 2. Select provider via rotation engine
-        base_url, _, provider = self._get_proxied_request_params(target_ebay_url, [])
+        base_url, _, provider = self._get_proxied_request_params(target_ebay_url, self._active_blacklist)
 
-        # 3. Resolve API Tokens cleanly from config object attributes
+        # 2.5 Safety Guard: Check credits
+        if self._runtime_credits.get(provider, 0) <= 0:
+            logger.warning(f"Provider {provider} exhausted. Blacklisting.")
+            self._active_blacklist.append(provider)
+            return []
+
+        # 3. Resolve API Tokens, Timeouts, and Gateway Headers
         proxy_rotation = getattr(self.config, "proxy_rotation", {})
         providers_cfg = proxy_rotation.get("providers", {}) if isinstance(proxy_rotation, dict) else getattr(proxy_rotation, "providers", {})
-        api_key = providers_cfg.get(provider, {}).get("api_key")
 
-        # 4. Payload Generation mapping direct parameters using explicit primitive booleans
-        if provider == "scraperapi":
-            payload = {
-                "api_key": api_key,
-                "url": f"{target_ebay_url}&cb={int(time.time() * 1000)}",
-                "render": "true",
-                "skip_cache": "true",
-                "wait_for_selector": ".srp-results, .s-card--horizontal"
-            }
-        elif provider == "scrapeops":
-            payload = {
-                "api_key": api_key,
-                "url": target_ebay_url,
-                "bypass": "cloudflare_imperva",
-                "render_js": "true",
-                "residential": "true",
-                "wait_for_selector": ".s-card--horizontal"
-            }
-        elif provider == "zenrows":
-            # Pass options exactly per ZenRows spec using native request serialization behavior
-            payload = {
-                "apikey": api_key,
-                "url": target_ebay_url,
-                "render_js": "true",
-                "proxy_country": "us",
-                "premium_proxy": "true"
+        p_cfg = providers_cfg.get(provider, {})
+        api_key = p_cfg.get("api_key")
+        timeout = p_cfg.get("api_timeout_seconds", 30)
+
+        # Initialize variables before conditional assignments
+        headers = {}
+        payload_key = None
+
+        # Determine if we are using a RapidAPI gateway
+        if "rapidapi" in p_cfg.get("base_url", "").lower():
+            headers = {
+                "x-rapidapi-key": api_key,
+                "x-rapidapi-host": p_cfg.get("base_url", "").replace("https://", "").split("/")[0]
             }
         else:
-            payload = {"api_key": api_key, "url": target_ebay_url}
+            payload_key = api_key
+
+        # 4. Payload Generation
+        payload = {"url": target_ebay_url}
+        if payload_key:
+            payload["api_key"] = payload_key
+
+        # Map provider-specific primitives
+        config = p_cfg.copy()
+        if provider == "scraperapi":
+            payload.update({"render": "true", "skip_cache": "true", "wait_for_selector": ".srp-results, .s-card--horizontal", "url": f"{target_ebay_url}&cb={int(time.time() * 1000)}"})
+        elif provider == "scrapeops":
+            payload.update({"bypass": "cloudflare_imperva", "render_js": "true", "residential": "true", "wait_for_selector": ".s-card--horizontal"})
+        elif provider == "scraperbox":
+            payload.update({"render": "true"})
+        elif provider == "webscraping_ai":
+            payload.update({"proxy": "residential"})
 
         # 5. Execute Request
+        request_url = f"{p_cfg.get('base_url', '').rstrip('/')}{p_cfg.get('endpoint_path', '')}"
         try:
-            logger.debug(f"Dispatching gateway call to {provider} | URL: {base_url}")
-            response = requests.get(base_url, params=payload, timeout=self.timeout)
+            logger.debug(f"Dispatching to {provider} | URL: {request_url}")
+            response = requests.get(request_url, params=payload, headers=headers, timeout=timeout)
+
+            if response.status_code in [401, 403]:
+                self._runtime_credits[provider] = 0
+                return []
 
             if response.status_code == 200:
                 return self._parse_ebay_html(response.text, model_name, category_id, True, strategy)
 
-            logger.error(f"Gateway {provider} rejected request. Status: {response.status_code} | Body Summary: {response.text[:200]}")
             return []
         except Exception as e:
-            logger.exception(f"Request failed for {provider}: {str(e)}")
+            logger.error(f"Provider {provider} failed: {e}")
             return []
 
     def get_credit_summary(self) -> str:
@@ -163,127 +187,60 @@ class EbayScrapeClient:
         return " | ".join(summaries)
 
     def _get_proxied_request_params(self, target_url: str, blacklisted_providers: List[str]) -> Tuple[str, Dict[str, Any], str]:
-        """Evaluates the proxy rotation matrix and applies weighted random selection."""
-        # 1. Extract rotation config
-        rotation_cfg = self.config.get("proxy_rotation", {}) if isinstance(self.config, dict) else getattr(self.config, "proxy_rotation", {})
-        providers = rotation_cfg.get("providers", {}) if isinstance(rotation_cfg, dict) else {}
+        rotation_cfg = getattr(self.config, "proxy_rotation", {})
+        providers = rotation_cfg.get("providers", {})
 
-        # 2. Filter out blacklisted providers
-        active_providers = {k: v for k, v in providers.items() if k not in blacklisted_providers}
+        # Filter by blacklist AND credit balance
+        active_providers = {
+            k: v for k, v in providers.items()
+            if k not in blacklisted_providers and self._runtime_credits.get(k, 0) > 0
+        }
 
-        # 3. If all providers are blacklisted, reset the list (self-healing)
         if not active_providers:
-            logger.warning("All providers blacklisted. Resetting proxy rotation cycle.")
-            blacklisted_providers.clear()
-            active_providers = providers
+            raise Exception("Critical: All proxy providers exhausted or blacklisted!")
 
-        # 4. Extract weights and perform weighted choice
+        # Perform weighted random selection
         names = list(active_providers.keys())
-        # Use .get("weight", 1) as a default to prevent math errors
-        weights = [int(active_providers[name].get("weight", 1)) for name in names]
+        weights = [int(p.get("default_weight", 25)) for p in active_providers.values()]
         chosen_name = random.choices(names, weights=weights, k=1)[0]
-
         p_info = active_providers[chosen_name]
 
-        # 5. Prepare payload
-        # Note: Some APIs require 'url' as a parameter, others might have different requirements
-        payload = {"api_key": p_info.get("api_key"), "url": target_url}
+        # 5. Prepare provider-specific payloads
+        payload = {"api_key": p_info.get("api_key")}
 
         if chosen_name == "scraperapi":
-            payload.update({"render": "false", "skip_cache": "true"})
-        elif chosen_name == "zenrows":
-            payload.update({"proxy_country": "us"})
+            payload.update({"url": target_url, "render": "false", "skip_cache": "true"})
+        elif chosen_name == "scrapeops":
+            payload.update({"url": target_url})
+        elif chosen_name == "webscraping_ai":
+            payload.update({"url": target_url, "proxy": "residential"})
+        elif chosen_name == "scraperbox":
+            payload.update({"url": target_url, "premium_proxy": "true"})
 
-        # Clean base_url to ensure consistency
-        base_url = p_info.get("base_url", "https://api.scraperapi.com").rstrip("/")
-
-        return base_url, payload, chosen_name
-
-        return p_info.get("base_url", "https://api.scraperapi.com").rstrip("/"), payload, chosen_name
+        return p_info.get("base_url").rstrip("/"), payload, chosen_name
 
     def dispatch_scrape(self, target_url: str, max_retries: int = 3) -> Optional[str]:
         """Circuit-breaker wrapper for proxy-rotated requests."""
-        blacklisted = []
+        # Use the class attribute instead of a local variable
         for attempt in range(max_retries):
-            base_url, payload, provider = self._get_proxied_request_params(target_url, blacklisted)
+            # Pass self._active_blacklist to your helper
+            base_url, payload, provider = self._get_proxied_request_params(target_url, self._active_blacklist)
             try:
                 response = requests.get(base_url, params=payload, timeout=self.timeout)
                 if response.status_code == 200:
                     return response.text
+
                 logger.warning(f"Provider {provider} failed with {response.status_code}. Blacklisting.")
-                blacklisted.append(provider)
+
+                # Append to the persistent class attribute
+                if provider not in self._active_blacklist:
+                    self._active_blacklist.append(provider)
+
             except Exception as e:
                 logger.error(f"Request failed: {e}")
         return None
 
-    def search_historical_sales(self, query: str, min_price: float, max_price: float, category_id: str, model_name: str, strategy: BaseCPUStrategy) -> List[MarketItem]:
-        """Harvests historical sales using weighted proxy rotation, using safe URL assignment schemas."""
-        self._enforce_politeness()
 
-        # 1. Construct Target eBay URL (Do not double-encode things requests will encode automatically)
-        cleaned_query = " ".join(query.split())
-        encoded_query = requests.utils.quote(cleaned_query)
-        target_ebay_url = f"https://www.ebay.com/sch/i.html?_nkw={encoded_query}&LH_Sold=1&LH_Complete=1&_ipg=100&_sop=13"
-        if category_id and str(category_id).lower() != "global root":
-            target_ebay_url += f"&_sacat={category_id}"
-        target_ebay_url += f"&_udlo={min_price}&_udhi={max_price}"
-
-        # 2. Select proxy rotation target via engine matrix
-        base_url, _, provider = self._get_proxied_request_params(target_ebay_url, [])
-
-        # 3. Resolve API Tokens cleanly from config object attributes
-        proxy_rotation = getattr(self.config, "proxy_rotation", {})
-        if isinstance(proxy_rotation, dict):
-            providers_cfg = proxy_rotation.get("providers", {})
-        else:
-            providers_cfg = getattr(proxy_rotation, "providers", {})
-
-        api_key = providers_cfg.get(provider, {}).get("api_key") if isinstance(providers_cfg, dict) else {}
-
-        # 4. Precise Payload Mapping per Gateway Spec
-        if provider == "scraperapi":
-            payload = {
-                "api_key": api_key,
-                "url": f"{target_ebay_url}&cb={int(time.time() * 1000)}",
-                "render": "true",
-                "skip_cache": "true",
-                "wait_for_selector": ".srp-results, .s-card--horizontal"
-            }
-        elif provider == "scrapeops":
-            payload = {
-                "api_key": api_key,
-                "url": target_ebay_url,
-                "bypass": "cloudflare_imperva",
-                "render_js": "true",
-                "residential": "true",
-                "wait_for_selector": ".s-card--horizontal"
-            }
-        elif provider == "zenrows":
-            # Zenrows uses 'apikey' without an underscore.
-            # If a 400 persists, ZenRows prefers headers or raw string queries for the target URL.
-            payload = {
-                "apikey": str(api_key),
-                "url": target_ebay_url,
-                "render_js": "true",
-                "proxy_country": "us",
-                "premium_proxy": "true"
-            }
-        else:
-            payload = {"api_key": api_key, "url": target_ebay_url}
-
-        # 5. Execute Pipeline Request Matrix
-        try:
-            logger.debug(f"Dispatching gateway call to {provider} | URL: {base_url}")
-            response = requests.get(base_url, params=payload, timeout=self.timeout)
-
-            if response.status_code == 200:
-                return self._parse_ebay_html(response.text, model_name, category_id, True, strategy)
-
-            logger.error(f"Gateway {provider} rejected request. Status: {response.status_code} | Body Summary: {response.text[:200]}")
-            return []
-        except Exception as e:
-            logger.exception(f"Request execution breakout failed for {provider}: {str(e)}")
-            return []
     def fetch_raw_item_page(self, item_url: str, max_retries: int = 3) -> str:
         """Fetches a raw item page using the existing dispatch_scrape circuit-breaker logic."""
         self._enforce_politeness()
@@ -445,3 +402,25 @@ class EbayScrapeClient:
 
         logger.debug(f"  │  └─ Captured {len(final_records)} items from variation bracket pool.")
         return final_records
+    def parse_standalone_item_hydration(self, html_content: str, item: MarketItem, strategy: Optional[Any] = None) -> MarketItem:
+        """
+        Executes Stage 2 structural data mutation by routing raw HTML payload
+        through the explicit domain strategy parser.
+        """
+        if not html_content:
+            logger.warning(f"⚠️ Blank HTML response packet passed to hydrator for item {item.item_id}")
+            return item
+
+        # Resolve explicit parameter first, then fallbacks
+        active_strategy = strategy or getattr(item, "strategy", None) or getattr(self, "strategy", None)
+
+        if active_strategy:
+            # Invoke your CPUStrategy text evaluation patterns!
+            item = active_strategy.extract_specific_attributes(html_content, item)
+        else:
+            logger.error(f"❌ Missing strategy context layer for item {item.item_id}. Executing fallback state.")
+            item.is_for_parts_or_not_working = (item.condition_id == 7000)
+            item.process_state = "HYDRATED"
+
+        item.is_parsed_by_agent = True
+        return item

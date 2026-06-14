@@ -1,7 +1,9 @@
 # src/database/db_manager.py
 
 import os
+import json
 import datetime
+from typing import Set
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from src.database.models import Base, MarketItemModel
@@ -34,6 +36,21 @@ class DatabaseManager:
         """Builds all tables, relations, and multi-indexes dynamically via SQLAlchemy Base."""
         Base.metadata.create_all(bind=self.engine)
 
+    def get_existing_item_ids(self, item_ids: list) -> Set[str]:
+        """Queries the database for a specific subset of IDs to verify existence."""
+        session = self.SessionLocal()
+        try:
+            # Efficiently check only the IDs provided in the list
+            results = session.query(MarketItemModel.item_id).filter(
+                MarketItemModel.item_id.in_(item_ids)
+            ).all()
+            return {str(row[0]) for row in results}
+        except Exception as e:
+            logger.error(f"Failed to filter existing IDs: {e}")
+            return set()
+        finally:
+            session.close()
+
     def commit_market_items(self, db_conn_unused, final_records: list, overwrite_on_conflict: bool = False) -> int:
         """
         Processes a batch list of MarketItem objects.
@@ -45,6 +62,7 @@ class DatabaseManager:
 
         session = self.SessionLocal()
         new_inserts_count = 0
+        model_columns = MarketItemModel.__table__.columns.keys()
 
         try:
             # 1. Pull existing IDs in this batch to verify what is truly new vs an ignore/update
@@ -58,12 +76,27 @@ class DatabaseManager:
             for item_dataclass in final_records:
                 is_new = str(item_dataclass.item_id) not in existing_ids
 
-                # 2. Map data structure into a clean schema layout dictionary
-                item_data = {
-                    c.name: getattr(item_dataclass, c.name)
-                    for c in MarketItemModel.__table__.columns
-                    if getattr(item_dataclass, c.name, None) is not None
-                }
+                # 2. Extract item data dictionary from the dataclass
+                raw_data = item_dataclass.__dict__.copy()
+
+                # 🛠️ DATATYPE HARMONIZATION: Extract string image_url from image_urls collection list if needed
+                if "image_urls" in raw_data and "image_url" in model_columns:
+                    urls = raw_data.get("image_urls")
+                    if urls and isinstance(urls, list):
+                        raw_data["image_url"] = urls[0]
+                    elif isinstance(urls, str):
+                        raw_data["image_url"] = urls
+
+                # Map data structure into a clean schema layout dictionary restricted to your model table columns
+                item_data = {}
+                for col_name in model_columns:
+                    val = raw_data.get(col_name)
+                    if val is not None:
+                        # 🛠️ SERIALIZATION PATCH: Convert unbindable complex types to primitive json text blocks for SQLite
+                        if isinstance(val, (list, dict)):
+                            item_data[col_name] = json.dumps(val)
+                        else:
+                            item_data[col_name] = val
 
                 stmt = sqlite_insert(MarketItemModel).values(**item_data)
 
@@ -73,9 +106,9 @@ class DatabaseManager:
                     stmt = stmt.on_conflict_do_update(
                         index_elements=['item_id'],
                         set_={
-                            c.name: getattr(stmt.excluded, c.name)
-                            for c in MarketItemModel.__table__.columns
-                            if c.name != 'item_id'
+                            col_name: getattr(stmt.excluded, col_name)
+                            for col_name in model_columns
+                            if col_name != 'item_id'
                         }
                     )
                 else:

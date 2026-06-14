@@ -1,3 +1,4 @@
+# tests/test_database_manager.py
 import pytest
 from unittest.mock import MagicMock
 from src.core.models import MarketItem
@@ -8,7 +9,6 @@ from src.database.models import MarketItemModel, HistoricalMetricModel
 def mock_config():
     """Provides a dummy config that points to an in-memory SQLite database."""
     config = MagicMock()
-    # Using :memory: ensures tests run in RAM and leave no disk footprint
     config.params = {"database": {"path": ":memory:"}}
     return config
 
@@ -35,12 +35,11 @@ def sample_market_item():
         condition_id=3000,
         is_sold=True,
         is_for_parts_or_not_working=False,
-        has_bent_pins=False,
+        condition_description="Excellent working condition",
         seller_username="component_king",
         feedback_score=1550,
         feedback_percentage=99.8,
-        is_top_rated=True,
-        buying_options=["BIN", "BEST_OFFER"],
+        buying_options="Buy It Now",  # Normalized string descriptor
         process_state="PENDING"
     )
 
@@ -50,41 +49,33 @@ def test_database_initialization(db_manager):
     inspector = inspect(db_manager.engine)
     tables = inspector.get_table_names()
 
-    # Assert that our unified table strategy built both expected tables
     assert "market_items" in tables
     assert "historical_metrics" in tables
 
 def test_insert_harvested_item_success(db_manager, sample_market_item):
     """Verifies a fresh MarketItem dataclass converts and saves to the database."""
-    # 1. Insert item via manager
     db_manager.insert_harvested_item(sample_market_item)
 
-    # 2. Open a direct validation session to read it back
     session = db_manager.SessionLocal()
     db_record = session.query(MarketItemModel).filter_by(item_id="123456789012").first()
     session.close()
 
-    # 3. Assert values map exactly as expected
     assert db_record is not None
     assert db_record.model_name == "5800X"
     assert db_record.total_cost == 120.00
-    assert db_record.is_top_rated is True
     assert db_record.process_state == "PENDING"
 
 def test_insert_harvested_item_upsert_behavior(db_manager, sample_market_item):
     """Verifies that inserting an item with an existing ID updates it instead of crashing."""
-    # 1. Insert initial record
     db_manager.insert_harvested_item(sample_market_item)
 
-    # 2. Modify state parameters on the same object (allowed because frozen=False now)
+    # Modify state parameters on the same object
     sample_market_item.process_state = "ANALYZED"
     sample_market_item.price = 110.00
     sample_market_item.total_cost = 115.00
 
-    # 3. Re-insert to trigger an upsert (session.merge)
     db_manager.insert_harvested_item(sample_market_item)
 
-    # 4. Verify database holds the updated values
     session = db_manager.SessionLocal()
     records = session.query(MarketItemModel).filter_by(item_id="123456789012").all()
     session.close()
