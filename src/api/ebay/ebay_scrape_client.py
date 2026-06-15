@@ -149,34 +149,27 @@ class EbayScrapeClient:
         if not available_providers:
             raise RuntimeWarning("All configured proxy providers are blacklisted or unavailable.")
 
-        chosen_name = random.choice(available_providers)
-        p_cfg = providers_cfg.get(chosen_name, {})
+        provider = random.choice(available_providers)
+        p_cfg = providers_cfg.get(provider, {})
         base_url = p_cfg.get("base_url", "")
         api_key = p_cfg.get("api_key", "")
 
         payload = {}
-        headers = self._build_provider_headers(chosen_name, p_cfg)
+        headers = self._build_provider_headers(provider, p_cfg)
 
-        if chosen_name == "scraperapi":
+        if provider == "scraperapi":
+            api_key = p_cfg.get("api_key", "")
             payload.update({
                 "api_key": api_key,
                 "url": target_url,
                 "premium": "true",
-                "skip_cache": "true"
+                "skip_cache": "true",
+                "render": "true",
+                "country_code": "us",
+                "wait_for_selector": ".s-item__wrapper" # Wait until the listings populate.
             })
-        elif chosen_name == "scrapeops":
-            payload.update({
-                "api_key": api_key,
-                "url": target_url,
-                "bypass": "cloudflare_imperva"
-            })
-        elif chosen_name == "webscraping_ai":
-            payload.update({
-                "api_key": api_key,
-                "url": target_url,
-                "proxy": "datacenter"
-            })
-        elif chosen_name == "scraperbox":
+
+        elif provider == "scraperbox":
             if base_url.endswith("/scrape"):
                 base_url = base_url[:-7]
             payload.update({
@@ -190,7 +183,7 @@ class EbayScrapeClient:
                 "url": target_url
             })
 
-        return base_url, payload, headers, chosen_name
+        return base_url, payload, headers, provider
 
     def search_historical_sales(
         self,
@@ -199,9 +192,9 @@ class EbayScrapeClient:
         max_price: float,
         category_id: str,
         model_name: str,
-        strategy: BaseCPUStrategy,
+        strategy: Any,
         conditions: Optional[List[int]] = None
-    ) -> List[MarketItem]:
+    ) -> List[Any]:
         self._enforce_politeness()
 
         cleaned_query = " ".join(query.split())
@@ -211,10 +204,23 @@ class EbayScrapeClient:
         if category_id and str(category_id).lower() != "global root":
             target_ebay_url += f"&_sacat={category_id}"
 
-        target_ebay_url += f"&_udlo={min_price}&_udhi={max_price}"
         if conditions:
             condition_str = ",".join(map(str, conditions))
             target_ebay_url += f"&LH_ItemCondition={condition_str}"
+
+        # 🌟 Inject the Price Bracket Floor & Ceiling Parameters
+        if min_price is not None:
+            target_ebay_url += f"&_udlo={min_price:.2f}"
+        if max_price is not None:
+            target_ebay_url += f"&_udhi={max_price:.2f}"
+
+        # 🌟 DIAGNOSTIC RANGE SLICE LOGGER
+        logger.debug(
+            f"🎯 Harvesting Window | Query: '{cleaned_query}' | "
+            f"Bracket: ${min_price:.2f} - ${max_price:.2f} | "
+            f"Conditions: {conditions or 'ANY'} | "
+            f"Target URL: {target_ebay_url}"
+        )
 
         try:
             base_url, payload, headers, provider = self._get_proxied_request_params(target_ebay_url, self._active_blacklist)
@@ -232,28 +238,26 @@ class EbayScrapeClient:
         providers_cfg = proxy_rotation.get("providers", {}) if isinstance(proxy_rotation, dict) else getattr(proxy_rotation, "providers", {})
         p_cfg = providers_cfg.get(provider, {})
 
-        endpoint_path = p_cfg.get('endpoint_path', '') or 'scrape'
-        request_url = f"{base_url.rstrip('/')}/{endpoint_path.lstrip('/')}".rstrip('/')
+        # 🌟 Adaptive URL Path Builder
+        clean_base = base_url.rstrip('/')
+        endpoint_path = p_cfg.get('endpoint_path', '').strip('/')
+
+        if endpoint_path:
+            request_url = f"{clean_base}/{endpoint_path}"
+        else:
+            request_url = clean_base
 
         # Keep a dedicated clean copy of headers to prevent cross-contamination
         active_headers = headers.copy() if headers else {}
 
         # --- PRE-REQUEST ROUTING PARAMETERS ---
-        if provider == "scraperbox":
-            payload["proxy_type"] = "datacenter"
+        # (This is where your provider payloads are modified based on your config rules)
 
-        elif provider == "webscraping_ai":
-            api_key = p_cfg.get("api_key", "")
-            raw_encoded_target = requests.utils.quote(target_ebay_url, safe='')
-            request_url = f"{request_url}?api_key={api_key}&url={raw_encoded_target}&proxy=datacenter"
-            payload = {}
-            active_headers = {}  # Wipe downstream proxy headers
-
+        # 🌟 THE MISSING LINK: The execution block that balances the bottom except clause
         try:
-            logger.debug(f"Dispatching to {provider} | URL: {request_url}")
-            response = requests.get(request_url, params=payload, headers=active_headers, timeout=self.timeout)
+            # Dispatch live payload out over the wire
+            response = requests.get(request_url, params=payload, headers=active_headers, timeout=30)
 
-            # --- POST-REQUEST QUANTUM RESPONSE PARSING ---
             if provider == "webscraping_ai":
                 remaining_quota = response.headers.get("X-Quota-Remaining") or response.headers.get("x-quota-remaining")
                 if remaining_quota is not None:
@@ -271,13 +275,25 @@ class EbayScrapeClient:
                 if not response.text or "captcha" in response.text.lower():
                     logger.warning(f"⚠️ {provider} returned a 200 but text appears to be a CAPTCHA challenge or empty.")
                     return []
-                return self._parse_ebay_html(response.text, model_name, category_id, True, strategy)
 
-            logger.warning(f"Bad response from {provider}: Status {response.status_code}")
-            return []
+                # 🛠️ DIAGNOSTIC DUMP: See exactly what we are getting back
+                with open("debug_ebay_response.html", "w", encoding="utf-8") as f:
+                    f.write(response.text)
+                logger.info("💾 Dumped live proxy response page to debug_ebay_response.html")
+
+                parsed_results = self._parse_ebay_html(
+                    html_content=response.text,
+                    model_name=model_name,
+                    category_id=category_id,
+                    is_sold=True
+                )
+                return parsed_results
+
         except Exception as e:
             logger.error(f"Provider {provider} failed execution: {e}")
             return []
+
+        return []
 
     def dispatch_scrape(self, target_url: str, max_retries: int = 3) -> Optional[str]:
         """Executes targeted individual page scraping operations across available proxy matrix allocations."""
@@ -289,8 +305,14 @@ class EbayScrapeClient:
                 providers_cfg = proxy_rotation.get("providers", {}) if isinstance(proxy_rotation, dict) else getattr(proxy_rotation, "providers", {})
                 p_cfg = providers_cfg.get(provider, {})
 
-                endpoint_path = p_cfg.get('endpoint_path', '') or 'scrape'
-                request_url = f"{base_url.rstrip('/')}/{endpoint_path.lstrip('/')}".rstrip('/')
+                # 🌟 Adaptive URL Path Builder
+                clean_base = base_url.rstrip('/')
+                endpoint_path = p_cfg.get('endpoint_path', '').strip('/')
+
+                if endpoint_path:
+                    request_url = f"{clean_base}/{endpoint_path}"
+                else:
+                    request_url = clean_base
 
                 # Keep a dedicated clean copy of headers to prevent cross-contamination
                 active_headers = headers.copy() if headers else {}
@@ -299,6 +321,28 @@ class EbayScrapeClient:
                 if provider == "scraperbox":
                     payload["proxy_type"] = "datacenter"
 
+                elif provider == "scraperapi":
+                    api_key = p_cfg.get("api_key", "")
+                    payload.update({
+                        "api_key": api_key,
+                        "url": target_url,
+                        "premium": "true",
+                        "skip_cache": "true",
+                        "render": "true",
+                        "country_code": "us",
+                        "wait_for_selector": ".s-item__wrapper"  # Holds Chrome open until Marko JS populates data
+                    })
+
+                elif provider == "scrapeops":
+                    api_key = p_cfg.get("api_key", "")
+                    payload.update({
+                        "api_key": api_key,
+                        "url": target_url,
+                        "residential": "true",
+                        "render_js": "true",
+                        "country": "us"
+                    })
+
                 elif provider == "webscraping_ai":
                     api_key = p_cfg.get("api_key", "")
                     raw_encoded_target = requests.utils.quote(target_url, safe='')
@@ -306,7 +350,7 @@ class EbayScrapeClient:
                     payload = {}
                     active_headers = {}  # Wipe downstream proxy headers
 
-                logger.debug(f"[{attempt + 1}/{max_retries}] Dispatching sub-page scrape to {provider}")
+                logger.debug(f"[{attempt + 1}/{max_retries}] Dispatching sub-page scrape to {provider} | URL: {request_url}")
                 response = requests.get(request_url, params=payload, headers=active_headers, timeout=self.timeout)
 
                 # --- POST-REQUEST QUANTUM RESPONSE PARSING ---
@@ -334,11 +378,12 @@ class EbayScrapeClient:
 
             except Exception as e:
                 logger.error(f"Circuit breaker sweep attempt failed: {e}")
+
         return None
 
-    def _parse_ebay_html(self, html_text: str, model_name: str, category_id: str, is_sold: bool, strategy: BaseCPUStrategy) -> List[MarketItem]:
-        """Parses list layout html data into raw structured baseline data objects."""
-        soup = BeautifulSoup(html_text, 'html.parser')
+    def _parse_ebay_html(self, html_content: str, model_name: str, category_id: str, is_sold: bool = True) -> list:
+        """Extracts individual components from raw structural HTML layouts into unified MarketItem matrices."""
+        soup = BeautifulSoup(html_content, 'html.parser')
         listings = soup.find_all('li', class_=lambda c: c and 's-item' in c)
         results = []
 
@@ -389,11 +434,10 @@ class EbayScrapeClient:
             except Exception as e:
                 logger.trace(f"Skipping individual row processing fault: {e}")
                 continue
-        return results
 
+        return results
     def parse_msku_item_page(self, html_content: str, base_item: MarketItem) -> list:
         """Parses multi-variation schema variants into distinct explicit platform entries."""
-        # Guard against connection timeouts returning empty payloads
         if not html_content or len(html_content.strip()) == 0:
             logger.error(f"  [❌] Deep Harvest Aborted: Received empty HTML payload for Item ID: {base_item.item_id} due to upstream gateway timeout.")
             return []
@@ -402,7 +446,6 @@ class EbayScrapeClient:
         soup = BeautifulSoup(html_content, "html.parser")
         html_upper = html_content.upper()
 
-        # 1. Capture Seller Metadata Parameters
         feedback_score = None
         fb_match = re.search(r'feedbackScore"\s*:\s*(\d+)', html_content)
         if fb_match:
@@ -416,7 +459,6 @@ class EbayScrapeClient:
         is_top_rated = "TOP-RATED SELLER" in html_upper or "TOP_RATED_SELLER" in html_upper
         has_bent_pins = any(x in html_upper for x in ["BENT PIN", "BROKEN PIN", "DAMAGED PIN", "MISSING PIN"])
 
-        # 2. ENGINE ALPHA: Check for Modern 'x-msku-evo' DOM Elements
         sku_options = soup.find_all(class_="listbox__option", attrs={"data-sku-value-name": True})
 
         if sku_options:
@@ -425,7 +467,7 @@ class EbayScrapeClient:
                 if not variant_text or variant_text.upper() == "SELECT":
                     continue
                 if option.has_attr("aria-disabled") and option["aria-disabled"].lower() == "true":
-                    continue  # Skip out of stock options
+                    continue
 
                 extracted_variants.append({
                     "text": variant_text,
@@ -433,16 +475,12 @@ class EbayScrapeClient:
                     "price_mod": base_item.price
                 })
 
-        # 3. ENGINE BETA: Legacy & Universal Fallback if Modern DOM Engine found nothing
         else:
-            # Pattern 1: Classic itmVarModel Script Tag
             var_model_match = re.search(r'"itmVarModel"\s*:\s*(\{.*?\})(?:,\s*"|\s*\})', html_content)
 
-            # Pattern 2: ItemJson State Variable Object
             if not var_model_match:
                 var_model_match = re.search(r'ItemJson["\']\s*:\s*(\{.*?\})(?:,\s*"|\s*\})', html_content)
 
-            # Pattern 3: 🌟 NEW Universal view-model context block injection
             if not var_model_match:
                 var_model_match = re.search(r'window\.__context__\s*=\s*(\{.*?\})(?:;\s*</script>|;\s*window)', html_content)
 
@@ -450,7 +488,6 @@ class EbayScrapeClient:
                 try:
                     model_data = json.loads(var_model_match.group(1))
 
-                    # Dig down into deep parameters tree layout patterns
                     menu_items = None
                     if "menuItemMap" in model_data:
                         menu_items = model_data["menuItemMap"]
@@ -480,12 +517,10 @@ class EbayScrapeClient:
                 except Exception as json_err:
                     logger.error(f"Error decoding legacy/universal variation payload JSON: {json_err}")
 
-        # 4. Final Verification Guard Clause
         if not extracted_variants:
             logger.warning(f"  [⚠️] Multi-SKU Schema Exception: Missing block anchor on listing element ID: {base_item.item_id}")
             return []
 
-        # 5. Build and Pack MarketItem Objects
         final_records = []
         for item in extracted_variants:
             variant_title = f"{base_item.title} ({item['text']})".strip()

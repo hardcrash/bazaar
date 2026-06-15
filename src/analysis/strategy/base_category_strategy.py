@@ -4,15 +4,24 @@ from src.core.models import MarketItem
 
 class BaseCategoryStrategy(ABC):
     def __init__(self, category_name: str, yaml_data: dict):
-        """
-        Populates category-wide rules from config/categories.yaml
-        """
+        # 1. Core identification markers
         self.category_name = category_name
-        self.config = yaml_data.get(category_name, {})
+        self.raw_yaml_matrix = yaml_data
+
+        # 2. Extract and scope target category child block safely
+        if isinstance(yaml_data, dict) and category_name in yaml_data:
+            self.config = yaml_data[category_name]
+        else:
+            self.config = yaml_data or {}
+
+        # 3. Use internal private variable storage to bypass read-only property blocks
+        self._blacklist_words = self.config.get("blacklist_words", [])
+        self._local_noise_blacklist = self.config.get("local_noise_blacklist", [])
 
     @property
-    def blacklist_words(self) -> list:
-        return self.config.get("blacklist_words", [])
+    def blacklist_words(self) -> list[str]:
+        # Fall back to parsed configuration values seamlessly
+        return getattr(self, '_blacklist_words', self.config.get("blacklist_words", []))
 
     @property
     def local_noise_blacklist(self) -> list:

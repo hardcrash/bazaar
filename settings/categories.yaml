@@ -69,12 +69,24 @@ CPU:
     "BUNDLE", "LAPTOP", "PC", "BAREBONES", "SYSTEM", "OPTANE", "P4800X", "P5800X", "METER", "RADIO"
   ]
 
-  # Local Engine Noise Level: Checked in code memory via title parsing loops
   local_noise_blacklist: [
+    # --- Structural Overlaps ---
     "SAW", "BLADE", "HSS", "TOOL", "STEEL", "MACHINERY", "WAVE",
     "ROCKFORD", "FOSGATE", "AMPLIFIER", "AMP", "COMBO", "MOBO", "KIT",
     "SUPPORT", "FOR", "COMPATIBLE", "ASUS", "MSI", "GIGABYTE", "ASROCK",
-    "DIXIE", "MA5800", "YAMAYO", "JOINT", "MOOG", "VVG", "DELL", "HP"
+    "DIXIE", "MA5800", "YAMAYO", "JOINT", "MOOG", "VVG", "DELL", "HP",
+
+    # --- Industrial & Heavy Machinery Part Collisions ---
+    "CUMMINS", "FUEL", "INJECTOR", "NOZZLE", "GASKET", "VALVE",
+    "HONDA", "CARBURETOR", "ENGINE", "GARDEN", "MOWER",
+    "BEARING", "SEAL", "FLANGE", "PUMP",
+
+    # --- Component-Only / Accessory Cross-listings ---
+    "INTEL", "XEON", "I7", "I9", "NVIDIA", "GEFORCE", "RTX",
+    "COOLER", "FAN", "AIO", "HEATSINK", "PASTE",
+    "BOX", "EMPTY", "ONLY", "PACKAGING",
+    "READ", "DESCRIPTION", "FAULTY", "DEFECT",
+    "DESKTOP", "TOWER", "RIG", "GAMING PC", "BUILT"
   ]
 
   # 🌟 Fixed Indentation: Nested cleanly inside the CPU category context
@@ -93,8 +105,8 @@ CPU:
     require_sold: true
     step_size: 5     # 🌟 Modularity Win: Categorical step increments managed here
     min_price_broken: 110
-    max_price_broken: 130
-    min_price_used: 110
-    max_price_used: 130  # Adjusted upwards to catch high-end functional historical sales
+    max_price_broken: 120
+    min_price_used: 190
+    max_price_used: 200  # Adjusted upwards to catch high-end functional historical sales
     ebay_category_id: 164
     ebay_condition: [2000, 3000, 7000]

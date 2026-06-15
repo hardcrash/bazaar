@@ -69,12 +69,13 @@ def test_scrape_client_returns_all_required_market_item_fields(mock_config):
         """
 
     # FIXED: Realigned 'html_content=' keyword down to production signature 'html_text='
+    # FIXED: Updated parameter keyword to match production code signature
     parsed_items = client._parse_ebay_html(
-        html_text=sample_html_payload,
+        html_content=sample_html_payload, # 🌟 Changed from html_text to html_content
         model_name="5800X",
         category_id="CPU",
         is_sold=True,
-        strategy=mock_strategy
+  #      strategy=mock_strategy
     )
 
     assert len(parsed_items) == 1, "The core parser completely missed the sample raw listing."

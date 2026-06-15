@@ -5,8 +5,12 @@ from src.analysis.strategy.base_category_strategy import BaseCategoryStrategy
 from src.core.models import MarketItem
 
 class BaseCPUStrategy(BaseCategoryStrategy):
+
     def __init__(self, category_name: str, yaml_data: dict):
+        # 1. Let BaseCategoryStrategy handle structural dictionary scoping and private backing arrays
         super().__init__(category_name, yaml_data)
+
+        # 2. Extract specific CPU strategy structural constraints safely from self.config
         self.multisku_models = self.config.get("multisku_models", [])
         self.noise_words = self.config.get("noise_words", [])
 
@@ -94,7 +98,6 @@ class BaseCPUStrategy(BaseCategoryStrategy):
     def is_valid_standalone(self, item: MarketItem) -> bool:
         return "combo" not in item.title.lower()
 
-
     def get_price_brackets(self, pass_type: str = "used") -> list[tuple[float, float]]:
         harvest = self.config.get("historical_harvest", {})
 
@@ -151,4 +154,3 @@ class HistoricalCPUStrategy(BaseCPUStrategy):
     def max_price_cap(self) -> float:
         _, max_p = self.price_bounds
         return max_p
-
