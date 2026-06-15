@@ -39,3 +39,4 @@ config_credentials.yaml
 *.log
 logs/
 !logs/.gitkeep
+*.html
