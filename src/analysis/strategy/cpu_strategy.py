@@ -1,6 +1,7 @@
 # src/analysis/strategy/cpu_strategy.py
 
 import re
+from loguru import logger
 from src.analysis.strategy.base_category_strategy import BaseCategoryStrategy
 from src.core.models import MarketItem
 
@@ -62,16 +63,34 @@ class BaseCPUStrategy(BaseCategoryStrategy):
 
         return "UNKNOWN"
 
+
     def is_valid(self, title: str, target_model: str) -> str:
         title_upper = title.upper()
-        if any(word.upper() in title_upper for word in self.blacklist_words): return "INVALID"
-        if any(term.upper() in title_upper for term in self.local_noise_blacklist): return "INVALID"
 
-        models_found = [m for m in self.multisku_models if m.upper() in title_upper]
-        if len(models_found) >= 2: return "MSKU"
+        # 1. Clean up eBay UI boilerplate text immediately so it doesn't trigger false flags
+        clean_title = title_upper.replace("OPENS IN A NEW WINDOW OR TAB", "").strip()
 
-        if self.extract_model(title_upper, target_model.upper()) != target_model.upper():
+        # 2. Base structural API blacklist (Safe for straight substring checks)
+        if any(word.upper() in clean_title for word in self.blacklist_words):
             return "INVALID"
+
+        # 3. Local Noise Check with Strict Word Boundaries 🛡️
+        for term in self.local_noise_blacklist:
+            # \b rules ensure "FOR" won't look inside words or adjacent formatting slices
+            pattern = rf"\b{re.escape(term.upper())}\b"
+            if re.search(pattern, clean_title):
+                logger.debug(f"Drop -> Filter item contains blacklisted word token: '{term}'")
+                return "INVALID"
+
+        # 4. Multi-SKU Protection Loop
+        models_found = [m for m in self.multisku_models if m.upper() in clean_title]
+        if len(models_found) >= 2:
+            return "MSKU"
+
+        # 5. Extract and verify precise model target matching
+        if self.extract_model(clean_title, target_model.upper()) != target_model.upper():
+            return "INVALID"
+
         return "VALID"
 
     def extract_specific_attributes(self, html_content: str, item: MarketItem) -> MarketItem:

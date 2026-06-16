@@ -158,26 +158,35 @@ class EbayScrapeClient:
         headers = self._build_provider_headers(provider, p_cfg)
 
         if provider == "scraperapi":
-            api_key = p_cfg.get("api_key", "")
             payload.update({
                 "api_key": api_key,
                 "url": target_url,
-                "premium": "true",
-                "skip_cache": "true",
-                "render": "true",
-                "country_code": "us",
-                "wait_for_selector": ".s-item__wrapper" # Wait until the listings populate.
+                "premium": "true",  # Crushes tough anti-bot barriers
+                "skip_cache": "true",     # Forces fresh live retrieval
+                "render": "false",        # Lean, raw HTML processing (Saves 45 credits/pass!)
+                "country_code": "us"
+            })
+
+        elif provider == "scrapeops":
+            payload.update({
+                "api_key": api_key,
+                "url": target_url,
+                "residential": "true",    # Bypasses data center IP restrictions
+                "country": "us"
             })
 
         elif provider == "scraperbox":
             if base_url.endswith("/scrape"):
                 base_url = base_url[:-7]
             payload.update({
+                "token": api_key,         # ScraperBox maps authentication token to 'token'
                 "url": target_url,
                 "proxy_type": "residential",
-                "render": "true"
+                "render": "false"         # Swapped to false to match backend payload speed
             })
+
         else:
+            # Catch-all baseline signature for other configured endpoints
             payload.update({
                 "api_key": api_key,
                 "url": target_url
@@ -258,6 +267,19 @@ class EbayScrapeClient:
             # Dispatch live payload out over the wire
             response = requests.get(request_url, params=payload, headers=active_headers, timeout=30)
 
+            # 📡 UNIVERSAL NETWORK CHECKPOINT: Capture network state before any short-circuit evaluation
+            try:
+                with open("raw_network_checkpoint.txt", "w", encoding="utf-8") as f:
+                    f.write(f"TIMESTAMP: {datetime.datetime.now() if 'datetime' in globals() else 'LIVE'}\n")
+                    f.write(f"PROVIDER: {provider}\n")
+                    f.write(f"STATUS CODE: {response.status_code}\n")
+                    f.write(f"RESPONSE LENGTH: {len(response.text if response.text else '')}\n")
+                    f.write("-" * 50 + "\n")
+                    f.write(response.text[:3000] if response.text else "[EMPTY BODY]")
+                logger.info("📡 Dropped network diagnostic checkpoint to raw_network_checkpoint.txt")
+            except Exception as checkpoint_err:
+                logger.error(f"⚠️ Failed to write raw network checkpoint: {checkpoint_err}")
+
             if provider == "webscraping_ai":
                 remaining_quota = response.headers.get("X-Quota-Remaining") or response.headers.get("x-quota-remaining")
                 if remaining_quota is not None:
@@ -272,14 +294,33 @@ class EbayScrapeClient:
                 return []
 
             if response.status_code == 200:
-                if not response.text or "captcha" in response.text.lower():
+                html_lower = response.text.lower()
+
+                # 1. Catch Captcha challenges hidden in a 200 OK status
+                if not response.text or "captcha" in html_lower or "robot check" in html_lower:
                     logger.warning(f"⚠️ {provider} returned a 200 but text appears to be a CAPTCHA challenge or empty.")
                     return []
 
-                # 🛠️ DIAGNOSTIC DUMP: See exactly what we are getting back
-                with open("debug_ebay_response.html", "w", encoding="utf-8") as f:
-                    f.write(response.text)
-                logger.info("💾 Dumped live proxy response page to debug_ebay_response.html")
+                # 2. Extract specific indicators for verification
+                import re
+                title_match = re.search(r"<title>(.*?)</title>", response.text, re.IGNORECASE)
+                page_title = title_match.group(1).strip() if title_match else "NO TITLE FOUND"
+
+                # Check for structural anchors
+                has_items = "s-item" in response.text
+                has_results_grid = "srp-results" in response.text or "srp-river" in response.text
+
+                # 3. Determine quality state
+                is_bogus = "security measure" in html_lower or "attention required" in html_lower or not has_items
+
+                if is_bogus:
+                    logger.error(f"❌ [BOGUS RESPONSE] Provider: {provider} | Title: '{page_title}' | Has s-item nodes: {has_items}")
+                    # Only dump the file if it's broken, to save disk space and limit noise
+                    with open("debug_ebay_response.html", "w", encoding="utf-8") as f:
+                        f.write(response.text)
+                    logger.warning("💾 Dumped problematic payload to debug_ebay_response.html for inspection.")
+                else:
+                    logger.info(f"✨ [GOOD CONTENT] Provider: {provider} | Title: '{page_title}' | Found grid structure: {has_results_grid}")
 
                 parsed_results = self._parse_ebay_html(
                     html_content=response.text,
@@ -328,8 +369,7 @@ class EbayScrapeClient:
                         "url": target_url,
                         "premium": "true",
                         "skip_cache": "true",
-                        "render": "true",
-                        "country_code": "us",
+                        "render": "false",
                         "wait_for_selector": ".s-item__wrapper"  # Holds Chrome open until Marko JS populates data
                     })
 
@@ -381,24 +421,35 @@ class EbayScrapeClient:
 
         return None
 
+
     def _parse_ebay_html(self, html_content: str, model_name: str, category_id: str, is_sold: bool = True) -> list:
         """Extracts individual components from raw structural HTML layouts into unified MarketItem matrices."""
+        from bs4 import BeautifulSoup
+        import re
+        import random
+
         soup = BeautifulSoup(html_content, 'html.parser')
         listings = soup.find_all('li', class_=lambda c: c and 's-item' in c)
         results = []
 
         for item in listings:
-            if 's-item__pl-on-bottom' in item.get('class', []):
+            if item.get('class') and any('s-item__pl-on-bottom' in cls for cls in item.get('class')):
                 continue
 
             try:
                 title_elem = item.find('div', class_='s-item__title')
                 if not title_elem:
                     continue
-                title = title_elem.text.strip()
 
-                if "shop on ebay" in title.lower():
-                    continue
+                inner_span = title_elem.find('span', role='text')
+                if inner_span:
+                    title = inner_span.text.strip()
+                else:
+                    title = title_elem.text.strip()
+
+                if not title or "shop on ebay" in title.lower():
+                    if len(title) < 15 or "shop on" in title.lower():
+                        continue
 
                 link_elem = item.find('a', class_='s-item__link')
                 item_url = link_elem['href'].split('?')[0] if link_elem else ""
@@ -409,10 +460,14 @@ class EbayScrapeClient:
                 if not price_elem:
                     continue
 
-                price_text = price_elem.text.strip().replace('$', '').replace(',', '')
-                if 'to' in price_text.lower():
-                    price_text = price_text.lower().split('to')[0].strip()
-                price = float("".join(c for c in price_text if c.isdigit() or c == '.'))
+                price_raw_text = price_elem.text.strip()
+                if 'to' in price_raw_text.lower():
+                    price_raw_text = price_raw_text.lower().split('to')[0].strip()
+
+                price_digits = "".join(c for c in price_raw_text if c.isdigit() or c == '.')
+                if not price_digits:
+                    continue
+                price = float(price_digits)
 
                 market_item = MarketItem(
                     item_id=item_id,
@@ -436,6 +491,7 @@ class EbayScrapeClient:
                 continue
 
         return results
+
     def parse_msku_item_page(self, html_content: str, base_item: MarketItem) -> list:
         """Parses multi-variation schema variants into distinct explicit platform entries."""
         if not html_content or len(html_content.strip()) == 0:

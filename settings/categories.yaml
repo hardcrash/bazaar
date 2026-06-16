@@ -71,22 +71,25 @@ CPU:
 
   local_noise_blacklist: [
     # --- Structural Overlaps ---
-    "SAW", "BLADE", "HSS", "TOOL", "STEEL", "MACHINERY", "WAVE",
-    "ROCKFORD", "FOSGATE", "AMPLIFIER", "AMP", "COMBO", "MOBO", "KIT",
-    "SUPPORT", "FOR", "COMPATIBLE", "ASUS", "MSI", "GIGABYTE", "ASROCK",
-    "DIXIE", "MA5800", "YAMAYO", "JOINT", "MOOG", "VVG", "DELL", "HP",
+    "SAW", "BLADE", "HSS", "TOOL STEEL", "MACHINERY", "WAVE",
+    "ROCKFORD", "FOSGATE", "AMPLIFIER", "AMP COMBO", "MOBO COMBO",
+    "SUPPORT FOR", "COMPATIBLE WITH", "DIXIE", "MA5800", "YAMAYO",
+    "MOOG JOINT", "VVG",
 
     # --- Industrial & Heavy Machinery Part Collisions ---
-    "CUMMINS", "FUEL", "INJECTOR", "NOZZLE", "GASKET", "VALVE",
-    "HONDA", "CARBURETOR", "ENGINE", "GARDEN", "MOWER",
-    "BEARING", "SEAL", "FLANGE", "PUMP",
+    "CUMMINS", "FUEL INJECTOR", "FUEL NOZZLE", "GASKET", "VALVE",
+    "HONDA CARBURETOR", "ENGINE", "GARDEN MOWER", "FLANGE PUMP",
+    "BEARING SEAL",
 
     # --- Component-Only / Accessory Cross-listings ---
     "INTEL", "XEON", "I7", "I9", "NVIDIA", "GEFORCE", "RTX",
-    "COOLER", "FAN", "AIO", "HEATSINK", "PASTE",
-    "BOX", "EMPTY", "ONLY", "PACKAGING",
-    "READ", "DESCRIPTION", "FAULTY", "DEFECT",
-    "DESKTOP", "TOWER", "RIG", "GAMING PC", "BUILT"
+    "AIO COOLER", "THERMAL PASTE", "PASTE ONLY",
+    "BOX ONLY", "EMPTY BOX", "PACKAGING ONLY", "RETAIL BOX ONLY",
+    "FAN ONLY", "COOLER ONLY", "HEATSINK ONLY", "NO CPU", "LESS CPU",
+
+    # --- Full System Exclusions ---
+    "FULL TOWER", "GAMING RIG", "GAMING PC", "FULL PC", "DESKTOP PC",
+    "SYSTEM BUILT", "DESKTOP TOWER"
   ]
 
   # 🌟 Fixed Indentation: Nested cleanly inside the CPU category context
@@ -105,8 +108,8 @@ CPU:
     require_sold: true
     step_size: 5     # 🌟 Modularity Win: Categorical step increments managed here
     min_price_broken: 110
-    max_price_broken: 120
-    min_price_used: 190
-    max_price_used: 200  # Adjusted upwards to catch high-end functional historical sales
+    max_price_broken: 130
+    min_price_used: 115
+    max_price_used: 135  # Adjusted upwards to catch high-end functional historical sales
     ebay_category_id: 164
     ebay_condition: [2000, 3000, 7000]
