@@ -190,3 +190,23 @@ Here is the project structure for `bazaar-data` in Markdown format:
                    └───────────────────────────────────┘
 
 pytest test/
+
+⚙️ 1. process_state (The Workflow Engineer)
+
+This is an operational, short-lived status flag used exclusively by your Python controller loops to manage execution. It answers the question: "What programmatic action must I take on this row right now?"
+
+    Values: PENDING_DEEP_HARVEST, PENDING, PROCESSING, COMPLETED, ERROR.
+
+    Purpose: It acts as an execution gatekeeper. For example, if a loop crashes halfway through a premium harvest sweep, your script looks for PENDING_DEEP_HARVEST to resume exactly where it left off without wasting credits re-scraping successful items.
+
+    Lifecycle: It is highly volatile and changes frequently during a single execution run.
+
+📊 2. data_grade (The Data Quality Index)
+
+This is an analytical, permanent status flag used by your downstream database queries, reporting UIs, and pricing algorithms. It answers the question: "How dense, rich, and verified is the information inside this specific row?"
+
+    Values: BRONZE (Basic search page snapshot), SILVER (Deep leaf page verified specs), GOLD (AI-cleaned or manually verified anomaly-free row).
+
+    Purpose: It prevents bad or incomplete data from corrupting your analytics. When calculating the true average market value of a Ryzen 5800X, your SQL query should filter out basic entries that might be broken or mislabeled parent listings
+    
+    Lifecycle: It is append-only or upgrade-only. It represents a permanent milestone of asset maturity.
