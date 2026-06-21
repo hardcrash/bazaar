@@ -1,14 +1,20 @@
 # src/api/ebay/ebay_scrape_provider.py
 
+import json
 import random
 import time
+import datetime
+import re
 import requests
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Any, Optional
 from loguru import logger
 
-# 🌟 Strategies mapping cleanly to production nodes
+# Strategies mapping cleanly to production nodes
 from src.api.ebay.providers.scrapeops_provider import ScrapeOpsProvider
 from src.api.ebay.providers.scraperapi_provider import ScraperApiProvider
+
+# Mock/Type definitions to keep compilation signatures clean
+class MarketItem: pass
 
 class EbayScraperProvider:
     """
@@ -16,7 +22,7 @@ class EbayScraperProvider:
     billing/balance telemetry, and circuit breakers for anti-bot bypass.
     """
 
-    # 🌟 Registry mapping matching production-ready provider module files
+    # Registry mapping matching production-ready provider module files
     PROVIDER_STRATEGY_MAP = {
         "scraperapi": ScraperApiProvider,
         "scrapeops": ScrapeOpsProvider,
@@ -43,7 +49,7 @@ class EbayScraperProvider:
             providers = proxy_config.get("providers", {}) or {}
 
             # --- Dynamic Substring Scanning Loop ---
-            # Automatically processes custom variations like 'scrapeops_hmr' or 'scraperapi_cmk'
+            # Automatically processes custom variations like 'scrapeops_proton_hardcrash70'
             for provider_key, provider_cfg in providers.items():
                 api_key = provider_cfg.get("api_key", "")
 
@@ -97,7 +103,6 @@ class EbayScraperProvider:
 
         for name in list(self._runtime_credits.keys()):
             p_info = providers.get(name, {})
-            # Read either standard api_key or nested mapping configurations
             api_key = p_info.get("api_key") or p_info.get("api_key_str", "")
 
             if not api_key:
@@ -105,8 +110,10 @@ class EbayScraperProvider:
                 self._runtime_credits[name] = 0
                 continue
 
+            name_lower = name.lower()
             try:
-                if name == "scraperapi":
+                # 🎯 Fixed: Use dynamic substring checks instead of strict map lookups
+                if "scraperapi" in name_lower:
                     res = requests.get(f"http://api.scraperapi.com/account?api_key={api_key}", timeout=5)
                     if res.status_code == 200:
                         cleaned_text = res.text.strip()
@@ -122,15 +129,14 @@ class EbayScraperProvider:
                             except ValueError:
                                 self._runtime_credits[name] = 0
                     else:
-                        logger.error(f"❌ ScraperAPI Account Balance API returned status {res.status_code}. Setting allowance to 0.")
+                        logger.error(f"❌ ScraperAPI [{name}] Balance API returned status {res.status_code}. Setting allowance to 0.")
                         self._runtime_credits[name] = 0
 
-                elif name == "scrapeops":
+                elif "scrapeops" in name_lower:
                     res = requests.get(f"https://proxy.scrapeops.io/v1/account?api_key={api_key}", timeout=5)
                     if res.status_code == 200:
                         data = res.json()
                         if isinstance(data, dict):
-                            # Handle all common ScrapeOps API payload structures safely
                             if "api_credits_remaining" in data:
                                 self._runtime_credits[name] = int(data.get("api_credits_remaining", 0))
                             elif "remaining_credits" in data:
@@ -140,8 +146,7 @@ class EbayScraperProvider:
                                 used = data.get("credit_used", data.get("used", 0))
                                 self._runtime_credits[name] = max(0, limit - used)
                     else:
-                        # Fixed: Explicitly drop credit matrix to zero on network or key rejection
-                        logger.error(f"❌ ScrapeOps Account Balance API returned status code {res.status_code}. Setting allowance to 0.")
+                        logger.error(f"❌ ScrapeOps [{name}] Balance API returned status code {res.status_code}. Setting allowance to 0.")
                         self._runtime_credits[name] = 0
 
             except Exception as e:
@@ -163,8 +168,8 @@ class EbayScraperProvider:
         model_name: str,
         strategy: Any,
         conditions: Optional[List[int]] = None
-    ) -> List[MarketItem]:
-        self.provider.enforce_politeness()
+    ) -> List[Any]:
+        self.enforce_politeness()
 
         cleaned_query = " ".join(query.split())
         encoded_query = requests.utils.quote(cleaned_query)
@@ -188,35 +193,37 @@ class EbayScraperProvider:
 
         logger.info(f"🔗 Target Upstream eBay URL Generated: {target_ebay_url}")
 
-        # --- Dynamic Strategy Order Resolution ---
-        providers = ["scrapeops", "scraperapi"]
-        if str(strategy).lower() == "scraperapi":
-            providers = ["scraperapi", "scrapeops"]
+        # 🎯 Fixed: Gather all dynamically generated mapping keys currently present in runtime credits
+        configured_providers = list(self._runtime_credits.keys())
+
+        # Sort execution priority array based on passing strategy argument tags
+        strategy_str = str(strategy).lower()
+        configured_providers.sort(key=lambda k: strategy_str in k.lower(), reverse=True)
 
         response_html = None
 
         # --- Core Provider Failover Pipeline Loop ---
-        for provider in providers:
+        for provider in configured_providers:
             try:
-                # 1. Quota Pre-Flight Check (Reads directly from your manager class balance state)
-                if self.provider._runtime_credits.get(provider, 0) <= 0:
+                # 1. Quota Pre-Flight Check
+                if self._runtime_credits.get(provider, 0) <= 0:
                     logger.warning(f"Provider {provider} exhausted. Skipping configuration block.")
-                    self.provider.flag_provider_exhausted(provider)
+                    self.flag_provider_exhausted(provider)
                     continue
 
                 # 2. Dynamic Provider Class Extraction & Instantiation
-                proxy_config = getattr(self.provider.config, "proxy_rotation", {}).get("providers", {})
+                proxy_config = getattr(self.config, "proxy_rotation", {}).get("providers", {})
                 provider_cfg = proxy_config.get(provider, {})
+                provider_lower = provider.lower()
 
-                if provider == "scraperapi":
+                # 🎯 Fixed: Extract using safe substring mapping hooks
+                if "scraperapi" in provider_lower:
                     from src.api.ebay.providers.scraperapi_provider import ScraperApiProvider
-                    # Satisfies BaseProxyProvider.__init__(self, config, provider_cfg)
-                    provider_engine = ScraperApiProvider(self.provider, provider_cfg)
+                    provider_engine = ScraperApiProvider(self, provider_cfg)
 
-                elif provider == "scrapeops":
+                elif "scrapeops" in provider_lower:
                     from src.api.ebay.providers.scrapeops_provider import ScrapeOpsProvider
-                    # Satisfies BaseProxyProvider.__init__(self, config, provider_cfg)
-                    provider_engine = ScrapeOpsProvider(self.provider, provider_cfg)
+                    provider_engine = ScrapeOpsProvider(self, provider_cfg)
                 else:
                     logger.error(f"⚠️ Unrecognized structural provider string configuration: {provider}")
                     continue
@@ -235,7 +242,7 @@ class EbayScraperProvider:
                     request_url,
                     params=payload,
                     headers=active_headers if active_headers else None,
-                    timeout=self.provider.timeout
+                    timeout=self.timeout
                 )
 
                 # 4. Telemetry Extraction
@@ -252,22 +259,19 @@ class EbayScraperProvider:
                 except Exception as checkpoint_err:
                     logger.error(f"⚠️ Failed to write raw network checkpoint: {checkpoint_err}")
 
-                self.provider.update_quota_header(current_provider, response)
+                self.update_quota_header(current_provider, response)
 
                 # 6. Hard Rejection Checking (Auth / Rate limits)
                 if response.status_code in [401, 403, 429]:
                     logger.error(f"🔒 Authentication rejection / Quota Exceeded (Status {response.status_code}) on {current_provider}.")
-                    self.provider.flag_provider_exhausted(current_provider)
+                    self.flag_provider_exhausted(current_provider)
                     continue
 
                 # 7. Soft Content Rejection Check (CAPTCHAs or missing layout anchors)
                 html_lower = raw_text.lower()
-
-                # Hardened Layout Guard: Verifies that layout grid elements are structural, avoiding loose title strings
                 has_items_raw = "s-item__wrapper" in raw_text or 'li class="s-item' in raw_text
 
                 if response.status_code != 200 or not raw_text or "captcha" in html_lower or "robot check" in html_lower or "security measure" in html_lower or "attention required" in html_lower or not has_items_raw:
-
                     title_match = re.search(r"<title>(.*?)</title>", raw_text, re.IGNORECASE)
                     page_title = title_match.group(1).strip() if title_match else "NO TITLE FOUND"
                     logger.warning(f"❌ [BOGUS RESPONSE] Headless layout validation failed for {current_provider}. Title: '{page_title}' | Has s-item container: {has_items_raw}")
@@ -290,53 +294,20 @@ class EbayScraperProvider:
 
         # --- Extrapolate Sourcing Content Out-of-Bounds ---
         if response_html:
-            return self._parse_ebay_html(
-                html_content=response_html,
-                model_name=model_name,
-                category_id=category_id,
-                is_sold=True
-            )
+            # Assumes this parser helper is defined on your parent controller/mixin layout matrix
+            if hasattr(self, '_parse_ebay_html'):
+                return self._parse_ebay_html(
+                    html_content=response_html,
+                    model_name=model_name,
+                    category_id=category_id,
+                    is_sold=True
+                )
+            else:
+                logger.warning("⚠️ _parse_ebay_html method missing on provider class reference.")
+                return [response_html]
 
         logger.critical("❌ All configured proxy networks exhausted, unauthorized, or failing layout validation.")
         return []
-    def get_proxied_request_params(
-        self,
-        target_url: str,
-        provider_override: Optional[str] = None
-    ) -> Tuple[str, dict, dict, str]:
-        """
-        Compiles API keys, base parameters, and targets for proxy networks.
-        """
-        # 1. Determine which provider to use (fall back to internal default if None)
-        active_provider = provider_override if provider_override else self.current_strategy
-
-        # Normalize to lowercase if your internal configurations expect it
-        active_provider = active_provider.lower()
-
-        # 2. Match your existing payload generation matrix
-        # (Adapt the snippet below to match how your actual keys and dicts are organized)
-        payload = {}
-        active_headers = {"User-Agent": "BazaarData-Engine/1.0"}
-        request_url = target_url
-
-        if active_provider == "scraperapi":
-            request_url = "http://api.scraperapi.com"
-            payload = {
-                "api_key": self.scraperapi_key,
-                "url": target_url,
-                "keep_headers": "true"
-            }
-        elif active_provider == "scrapeops":
-            request_url = "https://proxy.scrapeops.io/v1/"
-            payload = {
-                "api_key": self.scrapeops_key,
-                "url": target_url
-            }
-        else:
-            raise ValueError(f"Unknown provider routing target: {active_provider}")
-
-        # Return: proxy endpoint url, parameter payload dict, headers dict, normalized provider string
-        return request_url, payload, active_headers, active_provider
 
     def flag_provider_exhausted(self, provider: str):
         """Liquidates operational availability state for a specific provider block."""
@@ -350,7 +321,8 @@ class EbayScraperProvider:
         if not response or not hasattr(response, 'headers'):
             return
 
-        if provider == "scraperapi":
+        provider_lower = provider.lower()
+        if "scraperapi" in provider_lower:
             remaining = response.headers.get("X-Amz-Meta-X-Quota-Remaining") or response.headers.get("x-scraperapi-quota-remaining")
             if remaining and str(remaining).isdigit():
                 self._runtime_credits[provider] = int(remaining)

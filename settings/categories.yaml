@@ -108,8 +108,8 @@ CPU:
     require_sold: true
     step_size: 5     # 🌟 Modularity Win: Categorical step increments managed here
     min_price_broken: 100
-    max_price_broken: 130
+    max_price_broken: 120
     min_price_used: 115
-    max_price_used: 145  # Adjusted upwards to catch high-end functional historical sales
+    max_price_used: 125 # Adjusted upwards to catch high-end functional historical sales
     ebay_category_id: 164
     ebay_condition: [2000, 3000, 7000]

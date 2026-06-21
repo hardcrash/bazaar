@@ -452,27 +452,57 @@ class EbayScrapeClient:
 
 
     def dispatch_scrape(self, target_url: str, max_retries: int = 3) -> Optional[str]:
-        """Executes targeted individual page scraping operations across available proxy matrix allocations."""
+        """
+        Executes targeted individual page scraping operations across available
+        proxy matrix allocations by dynamically coordinating underlying strategy engines.
+        """
+        from typing import Optional
+        import requests
+
         for attempt in range(max_retries):
+            # Extract current global state engine allocation markers
+            provider = self.provider.current_strategy  # e.g., "scrapeops" or "scraperapi" variant
+
             try:
-                base_url, payload, headers, provider = self.provider.get_proxied_request_params(target_url)
+                # 1. Resolve unified config parameters from the central state configuration matrix
                 proxy_rotation = getattr(self.config, "proxy_rotation", {})
-                providers_cfg = proxy_rotation.get("providers", {}) if isinstance(proxy_rotation, dict) else getattr(proxy_rotation, "providers", {})
+                if not isinstance(proxy_rotation, dict):
+                    providers_cfg = getattr(proxy_rotation, "providers", {})
+                else:
+                    providers_cfg = proxy_rotation.get("providers", {})
+
                 p_cfg = providers_cfg.get(provider, {})
 
-                clean_base = base_url.rstrip('/')
-                endpoint_path = p_cfg.get('endpoint_path', '').strip('/')
-                request_url = f"{clean_base}/{endpoint_path}" if endpoint_path else clean_base
+                # 2. Dynamic Provider Module Selection Factory Routing
+                if "scraperapi" in provider.lower():
+                    from src.api.ebay.providers.scraperapi_provider import ScraperApiProvider
+                    provider_engine = ScraperApiProvider(self.provider, p_cfg)
+                elif "scrapeops" in provider.lower():
+                    from src.api.ebay.providers.scrapeops_provider import ScrapeOpsProvider
+                    provider_engine = ScrapeOpsProvider(self.provider, p_cfg)
+                else:
+                    logger.error(f"❌ Unknown or unsupported provider target engine signature: {provider}")
+                    break
 
-                active_headers = headers.copy() if headers else {}
+                # 3. Compile base request parameters safely via our decoupled provider interfaces
+                request_url, payload, active_headers = provider_engine.build_request_params(target_url)
 
-                # 🌟 AD-HOC DEVIATIONS STRIPPED OUT:
-                # Let the infrastructure provider do its job generating the params cleanly.
                 logger.debug(f"[{attempt + 1}/{max_retries}] Dispatching sub-page scrape to {provider}")
-                response = requests.get(request_url, params=payload, headers=active_headers, timeout=self.provider.timeout)
 
-                self.provider.update_quota_header(provider, response)
+                # 4. Fire outbound transport execution loop
+                timeout_val = getattr(self.provider, "timeout", 20)
+                response = requests.get(
+                    request_url,
+                    params=payload,
+                    headers=active_headers,
+                    timeout=timeout_val
+                )
 
+                # Track credit headers inside our infrastructure core state
+                if hasattr(self.provider, "update_quota_header"):
+                    self.provider.update_quota_header(provider, response)
+
+                # 5. Handle responses, check thresholds, and flag network self-healing triggers
                 if response.status_code == 200:
                     if response.text and "captcha" not in response.text.lower():
                         return response.text
@@ -480,10 +510,13 @@ class EbayScrapeClient:
 
                 elif response.status_code in [401, 403]:
                     logger.error(f"🔒 Token pool depleted on {provider}. Liquidating availability.")
-                    self.provider.flag_provider_exhausted(provider)
+                    if hasattr(self.provider, "flag_provider_exhausted"):
+                        self.provider.flag_provider_exhausted(provider)
                     break
 
-                self.provider.flag_provider_exhausted(provider)
+                # For unhandled status codes (like a 503 error), flag provider exhaustion for failover
+                if hasattr(self.provider, "flag_provider_exhausted"):
+                    self.provider.flag_provider_exhausted(provider)
 
             except Exception as e:
                 logger.error(f"Circuit breaker sweep attempt failed: {e}")

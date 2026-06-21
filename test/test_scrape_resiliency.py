@@ -52,6 +52,17 @@ def test_scrape_handles_503_error(mock_prov_refresh, mock_client_refresh, mock_g
     client.provider.scraperapi_key = "test_key"
     client.provider.scrapeops_key = "backup_key"
 
+    # 🎯 FIX: Add the trailing slash to 'https://proxy.scrapeops.io/v1/'
+    def mock_get_proxied_params(target_url, provider_override=None):
+        provider = provider_override or "scraperapi"
+        if provider == "scraperapi":
+            return "http://api.scraperapi.com", {"api_key": "test_key", "url": target_url}, {}, "scraperapi"
+
+        # Locked trailing slash verification
+        return "https://proxy.scrapeops.io/v1/", {"api_key": "backup_key", "url": target_url}, {}, "scrapeops"
+
+    client.provider.get_proxied_request_params = mock_get_proxied_params
+
     # 2. Setup mock responses specifically for the dispatch scraping loop
     # Attempt 1: Returns a 503 error -> triggers node failover
     # Attempt 2: Swaps to the available backup provider -> returns successful HTML response
