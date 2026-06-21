@@ -35,10 +35,12 @@ config_credentials.yaml
 .idea/
 .DS_Store
 
-# Editor Swap Files
+# Editor Swap & Backup Files (Vim, Kate, etc.)
 *.swp
 *.swo
 *.*.swp
+.*.kate-swp
+*~
 
 # Log files
 *.log
