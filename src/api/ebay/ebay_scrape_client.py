@@ -63,54 +63,68 @@ class EbayScrapeClient:
 
         logger.info(f"🔗 Target Upstream eBay URL Generated: {target_ebay_url}")
 
-        # --- Dynamic Strategy Order Resolution ---
-        providers = ["scrapeops", "scraperapi"]
-        if str(strategy).lower() == "scraperapi":
-            providers = ["scraperapi", "scrapeops"]
+        # =======================================================
+        # --- Dynamic Strategy Order Resolution & Extraction ---
+        # =======================================================
+        # Extract the exact active provider blocks directly from your config layout
+        proxy_config = getattr(self.provider.config, "proxy_rotation", {})
+        configured_providers = proxy_config.get("providers", {})
+
+        # Build the iteration list dynamically from whatever keys are present in your YAML
+        # e.g., ["scrapeops_hmr"] or ["scraperapi_cmk", "scrapeops_hmr"]
+        providers = list(configured_providers.keys())
+
+        # If a specific strategy overrides the order, push that service name to the front
+        if str(strategy).lower() != "weighted_random":
+            providers.sort(key=lambda k: str(strategy).lower() in k.lower(), reverse=True)
 
         response_html = None
 
         # --- Core Provider Failover Pipeline Loop ---
-        for provider in providers:
+        for provider_key in providers:
             try:
-                # 1. Quota Pre-Flight Check
-                if self.provider._runtime_credits.get(provider, 0) <= 0:
-                    logger.warning(f"Provider {provider} exhausted. Skipping configuration block.")
-                    self.provider.flag_provider_exhausted(provider)
+                # 1. Quota Pre-Flight Check (Safely using dynamic config key name)
+                if self.provider._runtime_credits.get(provider_key, 0) <= 0:
+                    logger.warning(f"Provider {provider_key} exhausted. Skipping configuration block.")
+                    self.provider.flag_provider_exhausted(provider_key)
                     continue
 
-                # 2. Extract configuration payload specifically for this loop's provider
-                proxy_config = getattr(self.provider.config, "proxy_rotation", {}).get("providers", {})
-                provider_cfg = proxy_config.get(provider, {})
+                # 2. Extract configuration payload cleanly using the dynamic key string
+                provider_cfg = configured_providers.get(provider_key, {})
 
-                if provider == "scraperapi":
+                # 3. Dynamic Engine Type Identification via substring matching
+                if "scraperapi" in provider_key.lower():
                     from src.api.ebay.providers.scraperapi_provider import ScraperApiProvider
-                    # 🛠️ Keyword instantiation fallback to satisfy BaseProxyProvider requirements
                     try:
                         provider_engine = ScraperApiProvider(provider_cfg=provider_cfg)
                     except TypeError:
                         provider_engine = ScraperApiProvider(provider_cfg)
 
-                elif provider == "scrapeops":
+                elif "scrapeops" in provider_key.lower():
                     from src.api.ebay.providers.scrapeops_provider import ScrapeOpsProvider
-                    # 🛠️ Keyword instantiation fallback to satisfy BaseProxyProvider requirements
                     try:
                         provider_engine = ScrapeOpsProvider(provider_cfg=provider_cfg)
                     except TypeError:
                         provider_engine = ScrapeOpsProvider(provider_cfg)
                 else:
-                    logger.error(f"⚠️ Unrecognized structural provider string configuration: {provider}")
+                    logger.error(f"⚠️ Unrecognized structural provider string configuration: {provider_key}")
                     continue
 
-                # Build fully rendered parameters
+                # Build fully rendered parameters using the dynamically resolved engine
                 request_url, payload, active_headers = provider_engine.build_request_params(target_ebay_url)
-                current_provider = provider
+                current_provider = provider_key
 
                 logger.success(f"🚀 ROUTING CHOICE | Active Provider Strategy: [{current_provider.upper()}]")
                 logger.debug(f"⚙️ Compiled Request URL: {request_url}")
-                logger.debug(f"⚙️ Compiled Proxy Parameters: {json.dumps({k: (v if k != 'api_key' else '***') for k, v in payload.items()})}")
 
-                # 3. Network Transport Execution
+                # Dynamic masking that covers both hyphenated ('api-key') and underscored ('api_key') variations
+                sanitized_payload = {
+                    k: (v if k not in ['api_key', 'api-key'] else '***')
+                    for k, v in payload.items()
+                }
+                logger.debug(f"⚙️ Compiled Proxy Parameters: {json.dumps(sanitized_payload)}")
+
+                # 4. Network Transport Execution
                 logger.info(f"📡 Dispatching outbound HTTP request via {current_provider}...")
                 response = requests.get(
                     request_url,
@@ -119,11 +133,11 @@ class EbayScrapeClient:
                     timeout=self.provider.timeout
                 )
 
-                # 4. Telemetry Extraction
+                # 5. Telemetry Extraction
                 raw_text = response.text or ""
                 logger.info(f"📥 RESPONSE RECEIVED | Provider: [{current_provider.upper()}] | Status Code: {response.status_code} | Payload Size: {len(raw_text)} characters")
 
-                # 5. Continuous Network Diagnostic Drop
+                # 6. Continuous Network Diagnostic Drop
                 try:
                     with open("raw_network_checkpoint.txt", "w", encoding="utf-8") as f:
                         f.write(f"TIMESTAMP: {datetime.datetime.now()}\nPROVIDER: {current_provider}\nSTATUS CODE: {response.status_code}\n")
@@ -135,13 +149,13 @@ class EbayScrapeClient:
 
                 self.provider.update_quota_header(current_provider, response)
 
-                # 6. Hard Rejection Checking (Auth / Rate limits)
+                # 7. Hard Rejection Checking (Auth / Rate limits using dynamic log values)
                 if response.status_code in [401, 403, 429]:
                     logger.error(f"🔒 Authentication rejection / Quota Exceeded (Status {response.status_code}) on {current_provider}.")
                     self.provider.flag_provider_exhausted(current_provider)
                     continue
 
-                # 7. Soft Content Rejection Check (CAPTCHAs or missing layout anchors)
+                # 8. Soft Content Rejection Check (CAPTCHAs or missing layout anchors)
                 html_lower = raw_text.lower()
 
                 # Hardened Layout Guard: Look for structural anchors across both raw desktop and rendered JS states
@@ -163,7 +177,7 @@ class EbayScrapeClient:
                         f.write(raw_text)
                     continue
 
-                # 8. Integrity Audit Passed
+                # 9. Integrity Audit Passed
                 title_match = re.search(r"<title>(.*?)</title>", raw_text, re.IGNORECASE)
                 page_title = title_match.group(1).strip() if title_match else "NO TITLE FOUND"
                 logger.debug(f"🔍 Content Integrity Audit | Page Title: '{page_title}' | Raw 's-item' Substring Found: True")
@@ -173,9 +187,8 @@ class EbayScrapeClient:
                 break
 
             except Exception as e:
-                logger.error(f"Provider {provider} failed execution loop network transport layer: {e}")
+                logger.error(f"Provider {provider_key} failed execution loop network transport layer: {e}")
                 continue
-
         # --- Extrapolate Sourcing Content Out-of-Bounds ---
         if response_html:
             logger.info("🚀 Payload confirmed. Handing off raw markup stream to _parse_ebay_html().")
@@ -304,10 +317,14 @@ class EbayScrapeClient:
                 # =======================================================
                 # 2. URL and Entity Key Identification (Hardened JS Variant)
                 # =======================================================
+                # Priority 1: Snatch native platform IDs directly off DOM container tags
+                item_id = item.get('data-id') or item.get('data-itemid')
+
+                # Priority 2: Extract link element using comprehensive fallback matrix
                 link_elem = (
                     item.select_one(".s-item__link") or
                     item.find('a', class_=lambda c: c and 'item__link' in c) or
-                    item.select_one("a[href*='/itm/']") or  # Snaps any direct item link
+                    item.select_one("a[href*='/itm/']") or  # Snaps any direct single item link
                     item.find('a')  # Last resort structural fallback anchor
                 )
 
@@ -315,19 +332,17 @@ class EbayScrapeClient:
                 if link_elem and link_elem.has_attr('href'):
                     item_url = link_elem['href'].split('?')[0]
 
-                # If we STILL can't resolve a valid absolute URL, drop the node early
-                # because we can't reliably index or reference this item layout block.
-                if not item_url or "/itm/" not in item_url:
-                    logger.trace("Skipping element node: Unable to resolve absolute eBay tracking item URL structure.")
+                # Fallback Regex ID Check: If data attributes failed, parse ID out of valid URL string
+                if not item_id and item_url:
+                    item_id_match = re.search(r'/itm/(\d+)', item_url)
+                    if item_id_match:
+                        item_id = item_id_match.group(1)
+
+                # CRITICAL GUARD: Drop node early if we can't capture a real eBay ID or valid tracking URL.
+                # This guarantees that fake random IDs never corrupt your database deduplication layers.
+                if not item_id or not item_url or "/itm/" not in item_url:
+                    logger.trace("Skipping unidentifiable node: Missing absolute platform identifier metrics.")
                     continue
-
-                item_id = None
-                item_id_match = re.search(r'/itm/(\d+)', item_url)
-                if item_id_match:
-                    item_id = item_id_match.group(1)
-
-                if not item_id:
-                    item_id = f"raw_{random.randint(100000,999999)}"
 
                 # =======================================================
                 # 3. Price Block Parsing Heuristics (Resilient JS Variant)
@@ -345,7 +360,27 @@ class EbayScrapeClient:
                     continue
 
                 price_raw_text = price_elem.get_text(" ", strip=True)
-                is_msku_parent = 'to' in price_raw_text.lower() or item.select_one('.s-item__format-dynamic') is not None
+
+                # Check for explicit range indicators or structural layout formats
+                has_range_indicator = 'to' in price_raw_text.lower()
+                has_variant_format = (
+                    item.select_one('.s-item__format-dynamic') is not None or
+                    item.select_one('.s-item__format-variants') is not None
+                )
+
+                # Density Check: Flag listing if seller crams multiple monitored models into a single title
+                known_models_pool = ["5600X", "5700X", "5800X", "5900X", "5950X"]
+                matching_models_in_title = [
+                    m for m in known_models_pool
+                    if m.lower() in title.lower()
+                ]
+
+                # Composite MSKU Strategy Rule
+                is_msku_parent = (
+                    has_range_indicator or
+                    has_variant_format or
+                    len(matching_models_in_title) > 1
+                )
 
                 if 'to' in price_raw_text.lower():
                     price_raw_text = price_raw_text.lower().split('to')[0].strip()
