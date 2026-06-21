@@ -1,56 +1,51 @@
-# src/core/models.py
-from dataclasses import dataclass, field
-from typing import Optional, List
+from pydantic import BaseModel, Field
+from typing import Optional, Dict, Any, List
+from datetime import datetime
 
-@dataclass(frozen=False)  # Unfrozen to allow seamless pipeline state updates
-class MarketItem:
+class MarketItem(BaseModel):
     """
-    Unified data contract protecting the core architecture from variations
-    in third-party marketplace API schemas (eBay, Jawa, Mercari, etc.).
+    Unified domain model tracking an execution unit across extraction grades.
+    BRONZE: Initial list parsing entry status.
+    SILVER: Fully hydrated single-unit or multi-variation expanded records.
     """
-    # Core Platform Identifiers
-    item_id: str
-    model_name: str
-    category: str
-    source_platform: str = "ebay"
+    # Core Primary Keys & Identity Identifiers
+    item_id: str = Field(..., description="Unique platform item identifier (e.g., eBay Item ID)")
+    model_name: str = Field(..., description="Target hardware baseline model reference name (e.g., Ryzen 5800X)")
+    category: str = Field(..., description="System normalization category code classification")
 
-    # Text Representation
-    raw_title: str = ""
-    title: str = ""
+    # Textual Information
+    raw_title: str = Field(..., description="Unmodified title string directly out of the DOM asset")
+    title: str = Field(..., description="Cleaned, scrubbed, or variant-appended presentation title")
 
-    # Financial Matrix
-    price: float = 0.0
-    shipping_cost: float = 0.0
-    total_cost: float = 0.0
-    currency: str = "USD"
+    # Pricing Metrics Normalized to Float Scalars
+    price: float = Field(0.0, description="Base clearing or auction Hammer Price")
+    shipping_cost: float = Field(0.0, description="Extracted localized logistics or delivery surcharges")
+    total_cost: float = Field(0.0, description="Computed Gross Capital Cost (Price + Shipping)")
+    currency: str = Field("USD", description="Standard ISO alpha financial tracking code")
 
-    # Condition Metrics & Risk Signals
-    condition_id: int = 3000
-    is_sold: bool = True
-    is_for_parts_or_not_working: bool = False
-    has_bent_pins: bool = False  # Added to align with DatabaseManager mapping
-    condition_description: Optional[str] = None
+    # Metadata, Platform Indicators & Telemetry Tags
+    condition_id: int = Field(3000, description="Platform numerical condition mapping code (e.g., 3000=Used, 7000=For Parts)")
+    is_sold: bool = Field(True, description="Historical verification state flag marker")
+    source_platform: str = Field("ebay", description="Original distribution pipeline platform index")
+    item_url: str = Field("", description="Fully sanitized absolute tracking address pointer link")
+    quantity_sold: int = Field(1, description="Volume count cleared within the variant or listing configuration")
 
-    # Seller Metadata Engine
-    seller_username: Optional[str] = None
-    feedback_score: Optional[int] = None
-    feedback_percentage: Optional[float] = None
-    is_top_rated: bool = False  # Added to align with DatabaseManager mapping
+    # Target Seller Telemetry Fields (Populated via Silver Hydration)
+    feedback_score: Optional[int] = Field(None, description="The absolute feedback score count of the selling party")
+    feedback_percentage: Optional[float] = Field(None, description="Positive transaction ratio profile metric")
+    is_top_rated: bool = Field(False, description="Whether the seller carries elite platform status tags")
 
-    # Structural Attributes & Catalog Codes
-    epid: Optional[str] = None
-    buying_options: Optional[List[str]] = field(default_factory=list)  # Preserved as a list for JSONEncodedList compatibility
-    quantity_sold: Optional[int] = 1
-    bid_count: Optional[int] = None
+    # Custom Context Attribute Domain Flags
+    has_bent_pins: bool = Field(False, description="Hardware defect indicator parsing safety catch")
+    is_for_parts_or_not_working: bool = Field(False, description="Evaluated functional status boolean representation")
+    is_parsed_by_agent: bool = Field(False, description="Verification loop assertion milestone tracker")
 
-    # Temporal Velocity Counters
-    item_start_date: Optional[str] = None
-    item_end_date: Optional[str] = None
+    # Architectural Management State Variables
+    process_state: str = Field("PENDING", description="Pipeline lifecycle token value: PENDING, PENDING_DEEP_HARVEST, HYDRATED, COMPLETED")
+    data_grade: str = Field("BRONZE", description="Information depth structure index tier: BRONZE, SILVER, GOLD")
+    timestamp: datetime = Field(default_factory=datetime.now, description="System entry generation moment trace")
 
-    # Assets & State Routines
-    image_urls: Optional[List[str]] = field(default_factory=list)  # Expanded to allow complete array lists of high-res image assets
-    item_url: Optional[str] = None
-    process_state: Optional[str] = "PENDING"
-
-    # AI agent parameters
-    is_parsed_by_agent: bool = False
+    class Config:
+        """Pydantic model behaviors setup parsing rules matrix configuration"""
+        populate_by_name = True
+        arbitrary_types_allowed = True

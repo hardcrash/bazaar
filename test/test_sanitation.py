@@ -96,3 +96,16 @@ def test_repr_line_length_bounds_enforcement():
             f"Line breaking failure on row index {index}! "
             f"Length is {line_length} chars (Max: 80). Content: '{line}'"
         )
+
+
+    def test_title_sanitation_removes_embedded_whitespace_clutter(valid_ebay_json):
+        """
+        Validates that messy titles featuring internal spacing clutter, tabs, or newline
+        escapes are normalized cleanly into predictable single-spaced strings.
+        """
+        valid_ebay_json["title"] = "AMD\tRyzen   7 \n 5800X  Processor  "
+
+        schema = EbayAPIItemSchema(**valid_ebay_json)
+
+        # Internal spacing layout is collapsed down to simple single-character bounds
+        assert schema.title == "AMD Ryzen 7 5800X Processor"

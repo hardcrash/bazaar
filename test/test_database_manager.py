@@ -1,4 +1,5 @@
 # tests/test_database_manager.py
+
 import pytest
 from unittest.mock import MagicMock
 from src.core.models import MarketItem

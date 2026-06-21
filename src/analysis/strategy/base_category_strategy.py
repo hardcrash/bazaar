@@ -1,11 +1,13 @@
 # src/analysis/strategy/base_strategy.py
+
 from abc import ABC, abstractmethod
+from typing import List, Tuple
 from src.core.models import MarketItem
 
 class BaseCategoryStrategy(ABC):
     def __init__(self, category_name: str, yaml_data: dict):
         # 1. Core identification markers
-        self.category_name = category_name
+        self.category_name = category_name.upper()
         self.raw_yaml_matrix = yaml_data
 
         # 2. Extract and scope target category child block safely
@@ -14,21 +16,20 @@ class BaseCategoryStrategy(ABC):
         else:
             self.config = yaml_data or {}
 
-        # 3. Use internal private variable storage to bypass read-only property blocks
+        # 3. Guard property fallback states internally
         self._blacklist_words = self.config.get("blacklist_words", [])
         self._local_noise_blacklist = self.config.get("local_noise_blacklist", [])
 
     @property
-    def blacklist_words(self) -> list[str]:
-        # Fall back to parsed configuration values seamlessly
+    def blacklist_words(self) -> List[str]:
         return getattr(self, '_blacklist_words', self.config.get("blacklist_words", []))
 
     @property
-    def local_noise_blacklist(self) -> list:
+    def local_noise_blacklist(self) -> List[str]:
         return self.config.get("local_noise_blacklist", [])
 
     @property
-    def valid_models(self) -> list:
+    def valid_models(self) -> List[str]:
         return self.config.get("valid_models", [])
 
     @property
@@ -43,7 +44,7 @@ class BaseCategoryStrategy(ABC):
 
     @property
     @abstractmethod
-    def price_bounds(self) -> tuple[float, float]:
+    def price_bounds(self) -> Tuple[float, float]:
         """Returns a tuple of (min_price, max_price) for the current execution."""
         pass
 
@@ -55,20 +56,25 @@ class BaseCategoryStrategy(ABC):
 
     @abstractmethod
     def clean_title(self, raw_title: str) -> str:
+        """Strips out marketing and structural noise phrases from source string."""
         pass
 
     @abstractmethod
     def extract_model(self, title_upper: str, target_upper: str) -> str:
+        """Identifies and assigns exact canonical component matches."""
         pass
 
     @abstractmethod
     def is_valid(self, title: str, target_model: str) -> str:
+        """Evaluates noise blacklists and structural constraints to return state tags."""
         pass
 
     @abstractmethod
     def extract_specific_attributes(self, html_content: str, item: MarketItem) -> MarketItem:
+        """Parses leaf page contents to mutate items up to enriched data grades (e.g., SILVER/GOLD)."""
         pass
 
     @abstractmethod
     def is_valid_standalone(self, item: MarketItem) -> bool:
+        """Verifies if an item can bypass custom multi-sku or combo rule exclusions."""
         pass

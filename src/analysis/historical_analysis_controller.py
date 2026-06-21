@@ -36,14 +36,13 @@ class HistoricalAnalysisController(BaseController):
             exclusions = " ".join([f"-{word}" for word in strategy.config.get("blacklist_words", [])])
             query = f"{base_query} {exclusions}".strip()
 
-       # Build Historical Dual-Pass Ranges Matrix
+        # Build Historical Dual-Pass Ranges Matrix
         target_passes = []
         harvest_cfg = strategy.config.get("historical_harvest", {})
         conditions_configured = harvest_cfg.get("ebay_condition", [2000, 3000, 7000])
 
         # --- Pass A: Broken / Parts Only ---
         if 7000 in conditions_configured:
-            # 🌟 Fix: Pass the tracking string flag 'broken' to get correct bounds
             for min_p, max_p in strategy.get_price_brackets(pass_type="broken"):
                 target_passes.append({
                     "name": "BROKEN/PARTS_ONLY",
@@ -55,7 +54,6 @@ class HistoricalAnalysisController(BaseController):
         # --- Pass B: Used / Refurbished ---
         functional_conds = [c for c in conditions_configured if c != 7000]
         if functional_conds:
-            # 🌟 Fix: Pass the tracking string flag 'used' to get correct bounds
             for min_p, max_p in strategy.get_price_brackets(pass_type="used"):
                 target_passes.append({
                     "name": "USED/REFURBISHED_BASELINE",
@@ -103,43 +101,46 @@ class HistoricalAnalysisController(BaseController):
             logger.success("✨ All captured sweep items match historical records. No credit expenditures needed!")
             return {"status": "SUCCESS", "inserted_records": 0, "total_processed": len(all_collected_summaries)}
 
-        standard_items = [item for item in unseen_items if item.process_state != "PENDING_DEEP_HARVEST"]
-        msku_items = [item for item in unseen_items if item.process_state == "PENDING_DEEP_HARVEST"]
+        # 🦾 OPTIMIZATION GRID: Separate items based on deep harvest necessity
+        deep_harvest_items = [item for item in unseen_items if item.process_state == "PENDING_DEEP_HARVEST"]
+        direct_route_items = [item for item in unseen_items if item.process_state != "PENDING_DEEP_HARVEST"]
 
         final_items_to_commit = []
 
-        # Standalone Leaf Ingestion/Hydration Execution Block
-        if standard_items:
-            logger.info(f"Hydrating {len(standard_items)} standalone item descriptions...")
-            for base_item in standard_items:
+        # 🏎️ Tier 1: Direct Route Standard Items (Instantaneous Zero-Credit Hydration)
+        if direct_route_items:
+            logger.info(f"🏎️ Short-circuiting {len(direct_route_items)} standard items directly to queue (Credits Saved!).")
+            for base_item in direct_route_items:
                 if hasattr(strategy, 'is_valid_standalone') and not strategy.is_valid_standalone(base_item):
                     logger.warning(f"⏩ Strategy Filter: Dropping item {base_item.item_id} based on validation rules.")
                     continue
+                base_item.process_state = "PENDING"
+                final_items_to_commit.append(base_item)
+
+        # 🛰️ Tier 2: Premium Deep Leaf Ingestion (Restricted exclusively to complex target nodes)
+        if deep_harvest_items:
+            logger.info(f"🛰️ Executing premium leaf hydration loops for {len(deep_harvest_items)} high-priority variants...")
+            for variant_item in deep_harvest_items:
                 try:
-                    html_leaf = self.scrape_client.fetch_raw_item_page(base_item.item_url)
+                    html_leaf = self.scrape_client.fetch_raw_item_page(variant_item.item_url)
                     if html_leaf:
                         hydrated_item = self.scrape_client.parse_standalone_item_hydration(
-                            html_leaf, base_item, strategy=strategy
+                            html_leaf, variant_item, strategy=strategy
                         )
                         final_items_to_commit.append(hydrated_item)
                     else:
-                        logger.warning(f"Leaf fetch missed for item {base_item.item_id}. Retaining basic record.")
-                        base_item.process_state = "PENDING"
-                        final_items_to_commit.append(base_item)
+                        logger.warning(f"Leaf fetch missed for item {variant_item.item_id}. Retaining basic record.")
+                        variant_item.process_state = "PENDING"
+                        final_items_to_commit.append(variant_item)
                 except RuntimeError as net_err:
                     if str(net_err) == "ALL_PROXY_PROVIDERS_DOWN":
                         logger.error("🛑 Proxy gateway cluster reported absolute depletion. Saving collected rows.")
                         break
                     raise net_err
                 except Exception as leaf_err:
-                    logger.error(f"⚠️ Failed to process leaf page {base_item.item_id}: {leaf_err}")
-                    base_item.process_state = "ERROR"
-                    final_items_to_commit.append(base_item)
-
-        # Multi-SKU Items Routing Block
-        if msku_items:
-            logger.info(f"📦 Routing {len(msku_items)} Multi-SKU parent items straight to commit queue...")
-            final_items_to_commit.extend(msku_items)
+                    logger.error(f"⚠️ Failed to process leaf page {variant_item.item_id}: {leaf_err}")
+                    variant_item.process_state = "ERROR"
+                    final_items_to_commit.append(variant_item)
 
         # Commit Operations Block
         if not final_items_to_commit:

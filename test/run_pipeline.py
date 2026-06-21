@@ -1,4 +1,4 @@
-# run_pipeline.py
+# test/run_pipeline.py
 
 import logging
 import sys
@@ -30,7 +30,7 @@ def main():
     # 🌟 Simulating a real raw network payload incoming from an active API harvest run
     raw_api_payload = {
         "itemId": "v1-998877665544-0",
-        "title": "  *** SALE *** AMD Ryzen 7 7800X3D Gaming Processor  ",
+        "title": "   *** SALE *** AMD Ryzen 7 7800X3D Gaming Processor  ",
         "price": {"value": "349.00", "currency": "USD"},
         "shippingOptions": [{"shippingCost": {"value": "Free"}}],
         "conditionId": "1000", # New

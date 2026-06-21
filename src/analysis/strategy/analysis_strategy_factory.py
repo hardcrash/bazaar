@@ -1,6 +1,6 @@
 # src/analysis/strategy/analysis_strategy_factory.py
 
-from src.analysis.strategy.cpu_strategy import ActiveCPUStrategy, HistoricalCPUStrategy
+from src.analysis.strategy.cpu_strategy import CPUStrategy, ActiveCPUStrategy, HistoricalCPUStrategy
 from src.analysis.strategy.base_category_strategy import BaseCategoryStrategy
 
 class AnalysisStrategyFactory:

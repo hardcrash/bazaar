@@ -5,7 +5,7 @@ from loguru import logger
 from src.analysis.strategy.base_category_strategy import BaseCategoryStrategy
 from src.core.models import MarketItem
 
-class BaseCPUStrategy(BaseCategoryStrategy):
+class CPUStrategy(BaseCategoryStrategy):
 
     def __init__(self, category_name: str, yaml_data: dict):
         # 1. Let BaseCategoryStrategy handle structural dictionary scoping and private backing arrays
@@ -14,6 +14,12 @@ class BaseCPUStrategy(BaseCategoryStrategy):
         # 2. Extract specific CPU strategy structural constraints safely from self.config
         self.multisku_models = self.config.get("multisku_models", [])
         self.noise_words = self.config.get("noise_words", [])
+
+        # 🛡️ FIX: Resolve the read-only property safely without triggering a setter error
+        self._local_noise_blacklist = getattr(self.__class__, 'local_noise_blacklist', None)
+        if not isinstance(self._local_noise_blacklist, property):
+            # Fallback to config dictionary parse if the base property mixin is absent
+            self._local_noise_blacklist = self.config.get("local_noise_blacklist", [])
 
         # Pre-compile regexes for each variant to allow for optional whitespace
         raw_variants = self.config.get("model_variants", {})
@@ -135,7 +141,7 @@ class BaseCPUStrategy(BaseCategoryStrategy):
         return brackets
 
 
-class ActiveCPUStrategy(BaseCPUStrategy):
+class ActiveCPUStrategy(CPUStrategy):
     @property
     def category_id(self) -> str:
         return str(self.config.get("active_harvest", {}).get("ebay_category_id", "164"))
@@ -155,7 +161,7 @@ class ActiveCPUStrategy(BaseCPUStrategy):
         return max_p
 
 
-class HistoricalCPUStrategy(BaseCPUStrategy):
+class HistoricalCPUStrategy(CPUStrategy):
     @property
     def category_id(self) -> str:
         return str(self.config.get("historical_harvest", {}).get("ebay_category_id", "164"))

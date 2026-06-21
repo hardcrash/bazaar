@@ -75,3 +75,16 @@ def test_historical_aggregation_and_defect_segregation(memory_db_manager):
     assert defect_stats.avg_item_price == 90.0
 
     verify_session.close()
+
+    def test_historical_aggregation_handles_empty_datasets_gracefully(memory_db_manager):
+        """
+        Ensures that when statistical profiling runs against a missing hardware model target,
+        the system avoids math division crashes and responds with clean baseline defaults.
+        """
+        service = HistoricalAggregatorService(db_manager=memory_db_manager)
+
+        # Run calculation over a target string with no pre-existing database inserts
+        summary = service.compute_market_metrics(model_name="NON-EXISTENT-CPU", timeframe_days=30)
+
+        assert isinstance(summary, dict)
+        assert summary.get("processed_groups", 0) == 0

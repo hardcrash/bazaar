@@ -1,3 +1,5 @@
+# test/cpu_strategy.py
+
 import pytest
 # Update imports to pull our decoupled architecture classes
 from src.analysis.strategy.cpu_strategy import ActiveCPUStrategy, HistoricalCPUStrategy
@@ -64,7 +66,7 @@ def test_strategy_extracts_nested_harvest_pricing_metrics(mock_global_yaml):
     # Assert that global categorical core lists parse smoothly via properties
     assert "bundle" in active_strat.blacklist_words
 
-# Assert that distinct strategy instances pick up their custom nested price thresholds
+    # Assert that distinct strategy instances pick up their custom nested price thresholds
     assert active_strat.category_id == "164"
     assert active_strat.max_price_cap == 650.0
 
