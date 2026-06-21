@@ -45,13 +45,19 @@ class MarketItemTransformer:
             raise validation_err
 
         # 3. Safely map pristine data directly to our standardized tracking model
-        # Try both common attribute schemas dynamically (string or float variants)
         price_num = float(getattr(sanitized_payload, "price_string", getattr(sanitized_payload, "price", 0.0)))
         shipping_num = float(getattr(sanitized_payload, "shipping_string", getattr(sanitized_payload, "shippingCost", 0.0)))
 
         # Handle fallback for uniform array structure expected by down-funnel components
         img_url = image_info.get("imageUrl")
         image_urls_list = [img_url] if img_url else []
+
+        # 🦾 TELEMETRY LOOKUP TIER EVALUATION
+        # If the item payload contains premium metadata (like images or a feedback rating record),
+        # it gets marked as SILVER data. Otherwise, it gracefully tracks as baseline BRONZE.
+        assigned_grade = "BRONZE"
+        if image_urls_list or (sanitized_payload.feedback_score and sanitized_payload.feedback_score > 0):
+            assigned_grade = "SILVER"
 
         return MarketItem(
             item_id=sanitized_payload.item_id,
@@ -74,5 +80,6 @@ class MarketItemTransformer:
             feedback_score=sanitized_payload.feedback_score,
             feedback_percentage=getattr(sanitized_payload, "positive_feedback_percent", None),
             image_urls=image_urls_list,
-            process_state="PENDING"
+            process_state="PENDING",
+            data_grade=assigned_grade  # 🌟 Added explicit data tier tracking token!
         )
