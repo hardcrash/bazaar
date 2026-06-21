@@ -72,6 +72,10 @@ class MarketItemModel(Base):
     item_url = Column(String, nullable=True)
     process_state = Column(String, default="PENDING", index=True)
 
+    # 🌟 DATA GRADE PIPELINE SEGREGATION TOKEN
+    # Restricts metrics compilation downstream to verified item variant data entries.
+    data_grade = Column(String, default="BRONZE", nullable=False, index=True)
+
     # AI Agent Parameters
     is_parsed_by_agent = Column(Boolean, default=False)
 
