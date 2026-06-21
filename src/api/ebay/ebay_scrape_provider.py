@@ -30,29 +30,51 @@ class EbayScraperProvider:
         self.max_wait = 6.0
         self._active_blacklist: List[str] = []
         self._balances_already_refreshed = False
-        self.current_strategy = "scraperapi"
+        self.current_strategy = getattr(getattr(config, "proxy_rotation", {}), "strategy", "weighted_random")
+
+        # Dynamic runtime attributes to hold whatever explicit keys are active
+        self.scraperapi_key = ""
+        self.scrapeops_key = ""
+        self._runtime_credits: Dict[str, int] = {}
 
         # 🛠️ Safe Hydration of Provider Keys from Nested Config Matrix
         proxy_config = getattr(config, "proxy_rotation", {})
         if isinstance(proxy_config, dict) and proxy_config.get("enabled"):
-            providers = proxy_config.get("providers", {})
-            self.scraperapi_key = providers.get("scraperapi", {}).get("api_key", "")
-            self.scrapeops_key = providers.get("scrapeops", {}).get("api_key", "")
+            providers = proxy_config.get("providers", {}) or {}
+
+            # --- Dynamic Substring Scanning Loop ---
+            # Automatically processes custom variations like 'scrapeops_hmr' or 'scraperapi_cmk'
+            for provider_key, provider_cfg in providers.items():
+                api_key = provider_cfg.get("api_key", "")
+
+                if "scraperapi" in provider_key.lower() and api_key:
+                    self.scraperapi_key = api_key
+                    self._runtime_credits[provider_key] = 0  # Initialized; to be set by balance checker
+
+                elif "scrapeops" in provider_key.lower() and api_key:
+                    self.scrapeops_key = api_key
+                    self._runtime_credits[provider_key] = 1000  # Default layout buffer state
+
+                elif api_key:
+                    # Fallback for alternative or newly added providers
+                    self._runtime_credits[provider_key] = 1000
         else:
             # Fallback to legacy top-level attributes if rotation structure isn't populated
             self.scraperapi_key = getattr(config, "scraperapi_key", "")
             self.scrapeops_key = getattr(config, "scrapeops_key", "")
 
-        # Quick structural audit logging
-        if not self.scraperapi_key:
-            logger.warning("⚠️ ScraperAPI key missing or empty in configuration layout.")
-        if not self.scrapeops_key:
-            logger.warning("⚠️ ScrapeOps key missing or empty in configuration layout.")
+            if self.scraperapi_key:
+                self._runtime_credits["scraperapi"] = 0
+            if self.scrapeops_key:
+                self._runtime_credits["scrapeops"] = 1000
 
-        self._runtime_credits: Dict[str, int] = {
-            "scraperapi": 0,
-            "scrapeops": 0
-        }
+        # Quick structural audit logging based on unified status flags
+        if not self.scraperapi_key:
+            logger.warning("⚠️ No active or enabled ScraperAPI key signature in config.")
+        if not self.scrapeops_key:
+            logger.warning("⚠️ No active or enabled ScrapeOps key signature in config.")
+
+        # Trigger dynamic upstream check
         self.refresh_account_balances()
 
     def enforce_politeness(self):
