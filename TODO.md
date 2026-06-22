@@ -1,41 +1,39 @@
-# Bazaar Development Roadmap
+Data Infrastructure Roadmap
+Phase 1: Foundation & Persistence
 
-## TODO: Refine Stage 2 MSKU Parsing & Outlier Filtering
+    [x] Implement DatabaseManager: Create a robust session-based manager ensuring connection persistence and INSERT OR REPLACE logic for active data.
 
-* **Fix Heuristic Bleed on Hardware Defect Flags:** The current `has_bent_pins` check executes a page-wide string scan on the raw HTML. If a multi-sku listing contains a single broken unit or boilerplate defect text in the terms, all extracted variations are falsely marked as `Pins: True`.
-* **Solution:** Scope the regex/keyword heuristics tightly to the specific variation text block or individual item condition description container instead of the global `html_content`.
+    [x] Fortify Proxy Routing Engine: Stabilize adaptive weighting allocations to favor high-credit pipelines (scraperapi_email_on_demand) and prevent ghost state credit-drain cycles.
 
+    [ ] Add Round-Robin Strategy: Expand the rotation engine configuration options to support a deterministic round_robin sequence as an alternative to weighted_random.
 
-* **Handle MSKU Initial Target Discrepancy:** Multi-variation listings are slipping through Stage 1 bracket bounds because the parent card advertised the lowest variant's price (e.g., a 3700X for $99.90). Once Stage 2 unmasks the true target variant cost (e.g., the 5800X at $202.50), it violates the active historical slicing filter ($115–$120).
-* **Solution:** Ensure the database/analysis pipeline explicitly drops or routes unmasked items that fall outside the active price bracket to prevent statistical skewing in the analytics window.
+Phase 2: Ingestion & Extraction Engine
 
+    [ ] Repair MSKU Logic (CRITICAL): Re-engineer HTML parsing rules to cleanly intercept and unpack merchant stock keeping units (MSKU) and multi-variation item listings.
 
+    [ ] Max Out market_item Fields: Update structural scrapers to fully saturate all possible schema columns inside the target data entry blocks, leaving zero blind spots.
 
----
+    [ ] Data Validation Layer: Implement Pydantic models to validate and sanitize incoming eBay payloads before they are committed to the database.
 
-## Data Infrastructure Roadmap
+    [ ] Fragility Isolation (New Category Testing): Roll out a parallel scraper module for Mid-Tier Motherboards to track down, decouple, and eliminate hardcoded quirks or fragile extraction assumptions.
 
-### Phase 1: Foundation & Persistence
+Phase 3: Sourcing & Arbitrage Analytics Engine
 
+    [ ] Defect & Repair Sourcing Filter: Design advanced active-search string queries and tag parsers specifically targeting items listed under "For Parts or Not Working" that exhibit high-probability repair indicators.
 
-* [ ] **Implement `DatabaseManager`:** Create a robust session-based manager ensuring connection persistence and `INSERT OR REPLACE` logic for active data.
+    [ ] Historical Aggregator Service: Develop consolidation services that track analyzed_market_items histories to output:
 
-### Phase 2: Ingestion Engine
+        Price Benchmarks: High-velocity calculation of Mean, Median, Mode, and Standard Deviation across specific performance tiers.
 
-* [ ] **Implement `eBayApiClient`:** Develop the official API interface using OAuth2 credentials to replace current scraping logic.
-* [ ] **Data Validation Layer:** Implement `Pydantic` models to validate and sanitize incoming eBay JSON before it is committed to the database.
+        Defect Segregation: Count and group units marked is_for_parts_or_not_working versus working used / refurbished data models to establish accurate, risk-adjusted valuation limits.
 
-### Phase 3: Data Consolidation & Analytics
+    [ ] Profit Opportunity Predictor: Implement a real-time margin assessment layer:
+    Expected Net Profit=Target Resale Median−(Purchase Price+Est. Repair Costs+Platform Fees)
 
-* [ ] **Historical Harvester Implementation: Refine src/pipeline/historical_harvester.py to utilize ebay_scrape_client.py for backfilling data, ensuring the results are mapped to the standard MarketItem model before database insertion.
+    [ ] Unit Velocity Tracker: Implement analytical metrics for "Days on Market" (DoM) using variations between matching item_start_date and date_fetched vectors to separate high-velocity flips from stagnant stock.
 
-* [ ] **Historical Aggregator Service: Develop the consolidation logic that queries the analyzed_market_items table to compute:
-  
-  Price Benchmarks: Calculate Mean, Median, and Mode for pricing across defined categories.
-  
-  Defect Segregation: Count and group units marked is_for_parts_or_not_working vs. used / refurbished to establish "risk-adjusted" market value.
+Phase 4: UI/UX Orchestration Layer
 
-* [ ] **Unit Velocity Tracker: Implement the calculation logic for "Days on Market" (DoM) utilizing item_start_date and date_fetched to identify stagnant vs. high-velocity inventory.
-
+    [ ] GUI Dashboard Application: Design a localized workspace control center to visually manage active scraping processes, watch proxy allowances tick down live, and surface instant buy/repair arbitrage alerts.
 
 ---
