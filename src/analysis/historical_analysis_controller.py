@@ -15,6 +15,17 @@ class HistoricalAnalysisController(BaseController):
                     strategy: Optional[Any] = None,
                     **kwargs) -> Dict[str, Any]:
 
+        display_name = model_name or f"ID: {category_id}" or "Global Root"
+
+        logger.info(f"Launching [LIVE MUTATION RUN] [HISTORICAL] Harvesting Sweep for category: {display_name}")
+
+        # This ensures fresh, non-poisoned rotation rounds every time you click 'Run'
+        if not hasattr(self, '_active_blacklist'):
+            self._active_blacklist = []
+        else:
+            self._active_blacklist.clear()
+            logger.debug("♻️ Active provider blacklist has been reset for the new harvest sweep.")
+
         self.log_gateway_status()
         start_time = time.perf_counter()
         is_dry_run = kwargs.get("dry_run", False)
@@ -98,7 +109,7 @@ class HistoricalAnalysisController(BaseController):
             logger.info(f"🔒 API Call Protection Guard: Skipped deep checking for {skipped_count} items already present in DB.")
 
         if not unseen_items:
-            logger.success("✨ All captured sweep items match historical records. No credit expenditures needed!")
+            logger.success("✨ All captured sweep items match historical records. No database changes made!")
             return {"status": "SUCCESS", "inserted_records": 0, "total_processed": len(all_collected_summaries)}
 
         # 🦾 OPTIMIZATION GRID: Separate items based on deep harvest necessity

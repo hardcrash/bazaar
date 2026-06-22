@@ -9,6 +9,9 @@ from loguru import logger
 
 from src.core.models import MarketItem
 from src.api.ebay.ebay_scrape_provider import EbayScraperProvider
+from src.api.ebay.providers.scraperapi_provider import ScraperApiProvider
+from src.api.ebay.providers.scrapeops_provider import ScrapeOpsProvider
+
 
 class EbayScrapeClient:
     """
@@ -18,6 +21,7 @@ class EbayScrapeClient:
     def __init__(self, config):
         self.config = config
         self.provider = EbayScraperProvider(config=config)
+        self._active_blacklist = []
 
     def refresh_account_balances(self):
         """Proxy binding method mapping down onto the Infrastructure provider."""
@@ -203,13 +207,24 @@ class EbayScrapeClient:
         return []
 
     def _parse_ebay_html(self, html_content: str, model_name: str, category_id: str, is_sold: bool = True) -> List[MarketItem]:
+        from bs4 import BeautifulSoup
+        import re
+        from typing import List
+
         soup = BeautifulSoup(html_content, 'html.parser')
         results = []
+        strategy_used = "None (No matches found)"
+
+        # 🎯 CRITICAL FIX: Isolate the organic search result container block early.
+        # This prevents carousels, headers, and recommended ad panels from polluting the DOM parser pool.
+        organic_container = soup.select_one("ul.srp-results, div.srp-river-results, #mainContent")
+        target_scope = organic_container if organic_container else soup
 
         # 📊 Stage 1: Expanded Primary Tabular & River Layout Selectors
         try:
-            listings = soup.select(".srp-river-results .s-item__wrapper, .srp-results .s-item__wrapper, #srchResultsList .s-item__wrapper")
-            strategy_used = "Standard Wrapper (Grid/River CSS Selectors)"
+            listings = target_scope.select(".srp-river-results .s-item__wrapper, .srp-results .s-item__wrapper, #srchResultsList .s-item__wrapper")
+            if listings:
+                strategy_used = "Standard Wrapper (Grid/River CSS Selectors)"
         except Exception as e:
             logger.debug(f"Stage 1 selector failed: {e}")
             listings = []
@@ -217,15 +232,16 @@ class EbayScrapeClient:
         # Stage 2: Fallback to global list matching sets if river containers are obfuscated
         if not listings:
             try:
-                listings = soup.find_all('li', class_=lambda c: c and 's-item' in c)
-                strategy_used = "li.s-item (Fallback Class Matching)"
+                listings = target_scope.find_all('li', class_=lambda c: c and 's-item' in c)
+                if listings:
+                    strategy_used = "li.s-item (Fallback Class Matching)"
             except Exception as e:
                 logger.debug(f"Stage 2 selector failed: {e}")
 
         # Stage 3: Flexible Fallback for Rendered JS/Mobile Layout Engines
         if not listings:
             try:
-                listings = soup.select("[class*='s-item'][class*='wrapper'], [class*='sitem']")
+                listings = target_scope.select("[class*='s-item'][class*='wrapper'], [class*='sitem']")
                 if listings:
                     strategy_used = "Partial Substring Class Wildcard Matching"
             except Exception as e:
@@ -234,8 +250,8 @@ class EbayScrapeClient:
         # Stage 4: Extreme fallback via relative item link lookup (Heuristic Link Harvesting)
         if not listings:
             try:
-                item_links = soup.find_all('a', href=lambda h: h and ('/itm/' in h or 'itm/' in h))
-                logger.debug(f"🕵️‍♂️ Diagnostic: Found {len(item_links)} total /itm/ hyperlinks inside raw DOM stack.")
+                item_links = target_scope.find_all('a', href=lambda h: h and ('/itm/' in h or 'itm/' in h))
+                logger.debug(f"🕵️‍♂️ Diagnostic: Found {len(item_links)} total /itm/ hyperlinks inside organic DOM scope.")
 
                 seen_parents = set()
                 listings = []
@@ -277,7 +293,7 @@ class EbayScrapeClient:
         unhandled_exceptions = 0
 
         for item in listings:
-            # 🚨 RELAX THE GUARD: Trace log auxiliary placement templates
+            # 🚨 Check if this row is explicitly an ad banner hidden inside the s-item layout classes
             if item.get('class') and any('s-item__pl-on-bottom' in cls for cls in item.get('class')):
                 logger.trace("Encountered auxiliary placement block layout template. Processing row regardless.")
 
@@ -310,6 +326,7 @@ class EbayScrapeClient:
                 else:
                     title = title_elem.get_text(" ", strip=True)
 
+                # Trap 'Shop on eBay' ad copies before database injection
                 if not title or "shop on ebay" in title.lower() or "shop on" in title.lower():
                     skipped_shop_on += 1
                     continue
@@ -317,29 +334,24 @@ class EbayScrapeClient:
                 # =======================================================
                 # 2. URL and Entity Key Identification (Hardened JS Variant)
                 # =======================================================
-                # Priority 1: Snatch native platform IDs directly off DOM container tags
                 item_id = item.get('data-id') or item.get('data-itemid')
 
-                # Priority 2: Extract link element using comprehensive fallback matrix
                 link_elem = (
                     item.select_one(".s-item__link") or
                     item.find('a', class_=lambda c: c and 'item__link' in c) or
-                    item.select_one("a[href*='/itm/']") or  # Snaps any direct single item link
-                    item.find('a')  # Last resort structural fallback anchor
+                    item.select_one("a[href*='/itm/']") or
+                    item.find('a')
                 )
 
                 item_url = ""
                 if link_elem and link_elem.has_attr('href'):
                     item_url = link_elem['href'].split('?')[0]
 
-                # Fallback Regex ID Check: If data attributes failed, parse ID out of valid URL string
                 if not item_id and item_url:
                     item_id_match = re.search(r'/itm/(\d+)', item_url)
                     if item_id_match:
                         item_id = item_id_match.group(1)
 
-                # CRITICAL GUARD: Drop node early if we can't capture a real eBay ID or valid tracking URL.
-                # This guarantees that fake random IDs never corrupt your database deduplication layers.
                 if not item_id or not item_url or "/itm/" not in item_url:
                     logger.trace("Skipping unidentifiable node: Missing absolute platform identifier metrics.")
                     continue
@@ -361,21 +373,18 @@ class EbayScrapeClient:
 
                 price_raw_text = price_elem.get_text(" ", strip=True)
 
-                # Check for explicit range indicators or structural layout formats
                 has_range_indicator = 'to' in price_raw_text.lower()
                 has_variant_format = (
                     item.select_one('.s-item__format-dynamic') is not None or
                     item.select_one('.s-item__format-variants') is not None
                 )
 
-                # Density Check: Flag listing if seller crams multiple monitored models into a single title
                 known_models_pool = ["5600X", "5700X", "5800X", "5900X", "5950X"]
                 matching_models_in_title = [
                     m for m in known_models_pool
                     if m.lower() in title.lower()
                 ]
 
-                # Composite MSKU Strategy Rule
                 is_msku_parent = (
                     has_range_indicator or
                     has_variant_format or
@@ -395,7 +404,6 @@ class EbayScrapeClient:
                 elif ',' in price_digits and '.' in price_digits:
                     price_digits = price_digits.replace(',', '')
 
-                # Safely assign back to our pre-defined local scope variable
                 price = float(price_digits)
 
                 # =======================================================
@@ -409,7 +417,7 @@ class EbayScrapeClient:
                     title=title,
                     price=price,
                     shipping_cost=shipping_cost,
-                    total_cost=price + shipping_cost,  # Safe scalar arithmetic math base
+                    total_cost=price + shipping_cost,
                     currency="USD",
                     condition_id=3000,
                     is_sold=is_sold,
@@ -441,7 +449,6 @@ class EbayScrapeClient:
                 f"Caught Code Crashes: {unhandled_exceptions}"
             )
 
-        # 📢 FINAL METRIC RECONCILIATION SNAPSHOT
         logger.info(
             f"📊 Parse Statistics Loop Yielded: {len(results)} Hydrated MarketItems | "
             f"Filtered States -> [No Title Elements: {skipped_no_title}, 'Shop On' Ad Blocks: {skipped_shop_on}, "
@@ -451,46 +458,46 @@ class EbayScrapeClient:
         return results
 
 
-    def dispatch_scrape(self, target_url: str, max_retries: int = 3) -> Optional[str]:
+    def dispatch_scrape(self, target_url: str, max_retries: int = 5) -> Optional[str]:
         """
         Executes targeted individual page scraping operations across available
         proxy matrix allocations by dynamically coordinating underlying strategy engines.
         """
-        from typing import Optional
-        import requests
 
         for attempt in range(max_retries):
-            # Extract current global state engine allocation markers
-            provider = self.provider.current_strategy  # e.g., "scrapeops" or "scraperapi" variant
+            # 🎯 Defend scope boundary against UnboundLocalError down-stream
+            provider = "UNASSIGNED_STRATEGY_NODE"
 
             try:
-                # 1. Resolve unified config parameters from the central state configuration matrix
-                proxy_rotation = getattr(self.config, "proxy_rotation", {})
-                if not isinstance(proxy_rotation, dict):
-                    providers_cfg = getattr(proxy_rotation, "providers", {})
-                else:
-                    providers_cfg = proxy_rotation.get("providers", {})
+                # 1. DYNAMIC ROTATION CALL
+                provider = self.provider.calculate_adaptive_routing_strategy()
+            except Exception as e:
+                logger.critical(f"❌ Cannot dispatch sub-scrape. Routing matrix engine error: {e}")
+                break
 
+            try:
+                # 2. Resolve unified config parameters from the central state configuration matrix
+                proxy_rotation = getattr(self.config, "proxy_rotation", {})
+                providers_cfg = proxy_rotation.get("providers", {}) if isinstance(proxy_rotation, dict) else getattr(proxy_rotation, "providers", {})
                 p_cfg = providers_cfg.get(provider, {})
 
-                # 2. Dynamic Provider Module Selection Factory Routing
-                if "scraperapi" in provider.lower():
-                    from src.api.ebay.providers.scraperapi_provider import ScraperApiProvider
+                # 3. Dynamic Provider Module Selection Factory Routing
+                provider_lower = provider.lower()
+                if "scraperapi" in provider_lower:
                     provider_engine = ScraperApiProvider(self.provider, p_cfg)
-                elif "scrapeops" in provider.lower():
-                    from src.api.ebay.providers.scrapeops_provider import ScrapeOpsProvider
+                elif "scrapeops" in provider_lower:
                     provider_engine = ScrapeOpsProvider(self.provider, p_cfg)
                 else:
                     logger.error(f"❌ Unknown or unsupported provider target engine signature: {provider}")
-                    break
+                    continue  # Skip this account, try the next loop iteration
 
-                # 3. Compile base request parameters safely via our decoupled provider interfaces
+                # 4. Compile base request parameters safely via our decoupled provider interfaces
                 request_url, payload, active_headers = provider_engine.build_request_params(target_url)
 
-                logger.debug(f"[{attempt + 1}/{max_retries}] Dispatching sub-page scrape to {provider}")
+                logger.debug(f"🔄 [{attempt + 1}/{max_retries}] Routing leaf scrape -> Account Node: [{provider}]")
 
-                # 4. Fire outbound transport execution loop
-                timeout_val = getattr(self.provider, "timeout", 20)
+                # 5. Fire outbound transport execution loop
+                timeout_val = getattr(self.provider, "timeout", 100)
                 response = requests.get(
                     request_url,
                     params=payload,
@@ -502,25 +509,29 @@ class EbayScrapeClient:
                 if hasattr(self.provider, "update_quota_header"):
                     self.provider.update_quota_header(provider, response)
 
-                # 5. Handle responses, check thresholds, and flag network self-healing triggers
+                # 6. Response Validation Layer & Triage Architecture
                 if response.status_code == 200:
-                    if response.text and "captcha" not in response.text.lower():
-                        return response.text
-                    logger.warning(f"⚠️ {provider} hit a soft CAPTCHA block during deep leaf hydration.")
+                    html_content = response.text or ""
+                    if "captcha" not in html_content.lower() and "robot check" not in html_content.lower():
+                        return html_content
 
-                elif response.status_code in [401, 403]:
-                    logger.error(f"🔒 Token pool depleted on {provider}. Liquidating availability.")
+                    logger.warning(f"⚠️ Account node [{provider}] returned soft CAPTCHA. Retrying with alternative wrapper...")
+                    continue  # Keep node active, cycle to next key on retry match
+
+                elif response.status_code in [401, 403, 429]:
+                    logger.error(f"🔒 Account token pool depleted/rejected on [{provider}] (Status: {response.status_code}). Blacklisting.")
                     if hasattr(self.provider, "flag_provider_exhausted"):
                         self.provider.flag_provider_exhausted(provider)
-                    break
+                    continue
 
-                # For unhandled status codes (like a 503 error), flag provider exhaustion for failover
-                if hasattr(self.provider, "flag_provider_exhausted"):
-                    self.provider.flag_provider_exhausted(provider)
+                else:
+                    logger.warning(f"❌ Mid-tier transport warning (Status: {response.status_code}) hit on node [{provider}].")
 
             except Exception as e:
-                logger.error(f"Circuit breaker sweep attempt failed: {e}")
+                logger.error(f"⚠️ Circuit breaker execution step failed for slot [{provider}]: {e}")
+                continue
 
+        logger.critical(f"❌ Individual page scrape failed completely after {max_retries} multi-account attempts.")
         return None
 
     def parse_msku_item_page(self, html_content: str, base_item: MarketItem) -> List[MarketItem]:
@@ -736,3 +747,15 @@ class EbayScrapeClient:
         except Exception as e:
             logger.error(f"❌ Critical failure during deep harvest fetch: {e}")
             return None
+
+    def flag_provider_exhausted(self, provider_name: str) -> None:
+        """Appends an exhausted or blocked provider to the transient blacklist layer."""
+        if not hasattr(self, '_active_blacklist'):
+            self._active_blacklist = []
+
+        if provider_name not in self._active_blacklist:
+            logger.warning(f"📉 Bypassing account node: [{provider_name}] permanently for this harvest run loop.")
+            self._active_blacklist.append(provider_name)
+
+        # Hard-kill its runtime memory score so the weight calculation drops to 0.0
+        self._runtime_credits[provider_name] = 0

@@ -66,7 +66,7 @@ CPU:
 
   # Native eBay API exclusion filters compiled at runtime (Keeps keyword count under 15)
   blacklist_words: [
-    "BUNDLE", "LAPTOP", "PC", "BAREBONES", "SYSTEM", "OPTANE", "P4800X", "P5800X"
+    "BUNDLE", "LAPTOP", "PC", "BAREBONES", "SYSTEM", "OPTANE", "P4800X", "P5800X", "HP IC"
   ]
 
   local_noise_blacklist: [
@@ -107,9 +107,9 @@ CPU:
     limit_per_sweep: 2000
     require_sold: true
     step_size: 5     # 🌟 Modularity Win: Categorical step increments managed here
-    min_price_broken: 100
-    max_price_broken: 120
-    min_price_used: 115
-    max_price_used: 125 # Adjusted upwards to catch high-end functional historical sales
+    min_price_broken: 35
+    max_price_broken: 55
+    min_price_used: 135
+    max_price_used: 155 # Adjusted upwards to catch high-end functional historical sales
     ebay_category_id: 164
     ebay_condition: [2000, 3000, 7000]

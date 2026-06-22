@@ -28,13 +28,29 @@ class AppConfig:
         self.categories = self._load_yaml(os.path.join(self.settings_path, "categories.yaml"))
         logger.info("Successfully loaded unified categories configuration matrix.")
 
+    def _clean_config_keys(self, data):
+        """Recursively sanitizes dictionary keys to strip newlines and hidden spaces."""
+        if isinstance(data, dict):
+            clean_dict = {}
+            for k, v in data.items():
+                # Strip raw newline characters and trailing whitespaces from the dictionary keys
+                clean_key = str(k).replace('\n', '').strip() if isinstance(k, str) else k
+                clean_dict[clean_key] = self._clean_config_keys(v)
+            return clean_dict
+        elif isinstance(data, list):
+            return [self._clean_config_keys(item) for item in data]
+        else:
+            return data
+
     def _load_yaml(self, path):
-        """Safely opens and loads a target configuration file."""
+        """Safely opens, loads, and sanitizes a target configuration file."""
         try:
             with open(path, 'r') as f:
                 data = yaml.safe_load(f) or {}
                 logger.debug(f"Loaded YAML file successfully: {path}")
-                return data
+
+                # Sanitize the nested config data blocks before returning
+                return self._clean_config_keys(data)
         except FileNotFoundError:
             logger.critical(f"Config Loader Malfunction: Missing critical file at '{path}'")
             raise FileNotFoundError(f"[-] Configuration Error: Missing file at '{path}'")
