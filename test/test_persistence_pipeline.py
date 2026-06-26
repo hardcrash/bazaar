@@ -1,9 +1,8 @@
-# test/test_persistence_pipeline.py
-
 import pytest
+from sqlalchemy import text
 from src.database.db_manager import DatabaseManager
 from src.analysis.aggregator import HistoricalAggregatorService
-from src.database.models import MarketItemModel, HistoricalMetricModel
+from src.database.models import MarketItemModel
 
 @pytest.fixture
 def memory_db_manager():
@@ -17,7 +16,6 @@ def test_historical_aggregation_and_defect_segregation(memory_db_manager):
     """
     session = memory_db_manager.SessionLocal()
 
-    # 🌟 Added raw_title and title inputs to clear database NOT NULL guards
     item_1 = MarketItemModel(
         item_id="t1",
         model_name="5800X",
@@ -59,32 +57,33 @@ def test_historical_aggregation_and_defect_segregation(memory_db_manager):
     session.commit()
     session.close()
 
-    # Trigger metrics calculation run
     service = HistoricalAggregatorService(db_manager=memory_db_manager)
     summary = service.compute_market_metrics(model_name="5800X", timeframe_days=30)
 
     assert summary["processed_groups"] == 2
 
     verify_session = memory_db_manager.SessionLocal()
-    standard_stats = verify_session.query(HistoricalMetricModel).filter_by(model_name="5800X", condition_type="STANDARD").first()
-    defect_stats = verify_session.query(HistoricalMetricModel).filter_by(model_name="5800X", condition_type="DEFECTIVE").first()
+    query = text("SELECT total_units, avg_item_price FROM historical_metrics WHERE model_name = :m AND condition_type = :c")
+    
+    standard_stats = verify_session.execute(query, {"m": "5800X", "c": "STANDARD"}).fetchone()
+    defect_stats = verify_session.execute(query, {"m": "5800X", "c": "DEFECTIVE"}).fetchone()
 
+    assert standard_stats is not None
     assert standard_stats.total_units == 2
     assert standard_stats.avg_item_price == 210.0
+    
+    assert defect_stats is not None
     assert defect_stats.total_units == 1
     assert defect_stats.avg_item_price == 90.0
 
     verify_session.close()
 
-    def test_historical_aggregation_handles_empty_datasets_gracefully(memory_db_manager):
-        """
-        Ensures that when statistical profiling runs against a missing hardware model target,
-        the system avoids math division crashes and responds with clean baseline defaults.
-        """
-        service = HistoricalAggregatorService(db_manager=memory_db_manager)
+def test_historical_aggregation_handles_empty_datasets_gracefully(memory_db_manager):
+    """Ensures that when statistical profiling runs against a missing hardware model target,
+    the system avoids math division crashes and responds with clean baseline defaults.
+    """
+    service = HistoricalAggregatorService(db_manager=memory_db_manager)
+    summary = service.compute_market_metrics(model_name="NON-EXISTENT-CPU", timeframe_days=30)
 
-        # Run calculation over a target string with no pre-existing database inserts
-        summary = service.compute_market_metrics(model_name="NON-EXISTENT-CPU", timeframe_days=30)
-
-        assert isinstance(summary, dict)
-        assert summary.get("processed_groups", 0) == 0
+    assert isinstance(summary, dict)
+    assert summary.get("processed_groups", 0) == 0

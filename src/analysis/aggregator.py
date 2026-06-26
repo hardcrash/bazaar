@@ -1,10 +1,9 @@
-# src/analysis/aggregator.py
-
 import logging
 from statistics import mean, median, mode, StatisticsError
 from datetime import datetime
 from sqlalchemy.orm import Session
-from src.database.models import MarketItemModel, HistoricalMetricModel
+from sqlalchemy import text # Added to run direct raw sql queries safely
+from src.database.models import MarketItemModel
 
 logger = logging.getLogger("BazaarPipeline")
 
@@ -40,7 +39,7 @@ class HistoricalAggregatorService:
                     standard_pool.append(item)
 
             # 3. Compute Aggregations for standard tier conditions
-            metrics_payload = []
+            processed_groups_count = 0
             for pool_type, current_pool in [("STANDARD", standard_pool), ("DEFECTIVE", defect_pool)]:
                 if not current_pool:
                     continue
@@ -65,27 +64,45 @@ class HistoricalAggregatorService:
 
                 mean_dom = mean(dom_deltas) if dom_deltas else 0.0
 
-                # Assemble database persistence metric target payload
-                metric_entry = HistoricalMetricModel(
-                    model_name=model_name,
-                    timeframe=f"{timeframe_days}d",
-                    condition_type=pool_type,
-                    total_units=len(current_pool),
-                    min_item_price=min(prices),
-                    max_item_price=max(prices),
-                    avg_item_price=mean(prices),
-                    med_item_price=median(prices),
-                    avg_shipping_cost=mean(shippings) if shippings else 0.0,
-                    avg_total_cost=mean(total_costs),
-                    # We can store the velocity tracking calculation on an extended metrics column if needed
-                )
+                # 5. Core SQL Execution: Replaces the missing HistoricalMetricModel declarative class
+                upsert_query = text("""
+                    INSERT INTO historical_metrics (
+                        model_name, timeframe, condition_type, total_units,
+                        min_item_price, max_item_price, avg_item_price, med_item_price,
+                        avg_shipping_cost, avg_total_cost, last_updated
+                    ) VALUES (
+                        :model_name, :timeframe, :condition_type, :total_units,
+                        :min_item_price, :max_item_price, :avg_item_price, :med_item_price,
+                        :avg_shipping_cost, :avg_total_cost, CURRENT_TIMESTAMP
+                    )
+                    ON CONFLICT(model_name, timeframe, condition_type) DO UPDATE SET
+                        total_units=excluded.total_units,
+                        min_item_price=excluded.min_item_price,
+                        max_item_price=excluded.max_item_price,
+                        avg_item_price=excluded.avg_item_price,
+                        med_item_price=excluded.med_item_price,
+                        avg_shipping_cost=excluded.avg_shipping_cost,
+                        avg_total_cost=excluded.avg_total_cost,
+                        last_updated=CURRENT_TIMESTAMP;
+                """)
 
-                session.merge(metric_entry)
-                metrics_payload.append(metric_entry)
+                session.execute(upsert_query, {
+                    "model_name": model_name,
+                    "timeframe": f"{timeframe_days}d",
+                    "condition_type": pool_type,
+                    "total_units": len(current_pool),
+                    "min_item_price": float(min(prices)),
+                    "max_item_price": float(max(prices)),
+                    "avg_item_price": float(mean(prices)),
+                    "med_item_price": float(median(prices)),
+                    "avg_shipping_cost": float(mean(shippings)) if shippings else 0.0,
+                    "avg_total_cost": float(mean(total_costs))
+                })
+                processed_groups_count += 1
 
             session.commit()
-            logger.info(f"📊 Processed statistics calculations for {model_name}: {len(metrics_payload)} groups saved.")
-            return {"processed_groups": len(metrics_payload)}
+            logger.info(f"📊 Processed statistics calculations for {model_name}: {processed_groups_count} groups saved.")
+            return {"processed_groups": processed_groups_count}
 
         except Exception as e:
             session.rollback()

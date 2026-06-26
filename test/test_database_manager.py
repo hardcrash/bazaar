@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import MagicMock
 from src.core.models import MarketItem
 from src.database.db_manager import DatabaseManager
-from src.database.models import MarketItemModel, HistoricalMetricModel
+from src.database.models import MarketItemModel
 
 @pytest.fixture
 def mock_config():

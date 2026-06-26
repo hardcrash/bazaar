@@ -1,4 +1,3 @@
-# src/database/models.py
 """
 Bazaar Database Schema Models
 
@@ -18,8 +17,8 @@ Base = declarative_base()
 class MarketItemModel(Base):
     """
     Relational database model representing the 'market_items' physical disk table.
-    Tracks structural payload telemetry state values across data grades.
-    """
+Tracks structural payload telemetry state values across data grades.
+"""
     __tablename__ = "market_items"
 
     # Core Identity Identifiers
@@ -33,29 +32,56 @@ class MarketItemModel(Base):
 
     # Pricing Metrics
     price = Column(Float, default=0.0, nullable=False)
-    shipping_cost = Column(Float, default=0.0, nullable=False)
-    total_cost = Column(Float, default=0.0, nullable=False)  # 🌟 Aligned
-    currency = Column(String, default="USD", nullable=False)
+    shipping_cost = Column(Float, default=0.0, nullable=True)
+    total_cost = Column(Float, default=0.0, nullable=False)
+    currency = Column(String, default="USD", nullable=True)
 
     # Condition & Verification Flags
     condition_id = Column(Integer, default=3000, nullable=False)
-    is_sold = Column(Boolean, default=True, nullable=False)
+    is_sold = Column(Boolean, default=True, nullable=True)
     source_platform = Column(String, default="ebay", nullable=False)
     item_url = Column(String, default="", nullable=True)
-    quantity_sold = Column(Integer, default=1, nullable=False)
+    quantity_sold = Column(Integer, default=1, nullable=True)
+    bid_count = Column(Integer, default=0, nullable=True)
 
     # Seller Telemetry Fields
-    seller_name = Column(String, nullable=True)  # Optional structural trace
-    feedback_score = Column(Integer, nullable=True)  # 🌟 Aligned
-    feedback_percentage = Column(Float, nullable=True)  # 🌟 Aligned
-    is_top_rated = Column(Boolean, default=False, nullable=False)
+    seller_username = Column(String, nullable=True)
+    feedback_score = Column(Integer, nullable=True)
+    feedback_percentage = Column(Float, nullable=True)
+    is_top_rated = Column(Boolean, default=False, nullable=True)
+    epid = Column(String, nullable=True)
+    buying_options = Column(String, nullable=True)
 
     # Custom Hardware Domain Flags
-    has_bent_pins = Column(Boolean, default=False, nullable=False)
-    is_for_parts_or_not_working = Column(Boolean, default=False, nullable=False)
-    is_parsed_by_agent = Column(Boolean, default=False, nullable=False)
+    has_bent_pins = Column(Boolean, default=False, nullable=True)
+    is_for_parts_or_not_working = Column(Boolean, default=False, nullable=True)
+    is_parsed_by_agent = Column(Boolean, default=False, nullable=True)
 
-    # Pipeline Management Lifecycles
-    process_state = Column(String, default="PENDING", nullable=False)
+    # Pipeline Management Lifecycles & Dynamic Chrono Bounds
+    process_state = Column(String, default="PENDING", nullable=True)
     data_grade = Column(String, default="BRONZE", nullable=False)
-    timestamp = Column(DateTime, default=datetime.datetime.now, nullable=False)
+    
+    # Chrono fields for velocity metric calculation matrices
+    item_start_date = Column(DateTime, nullable=True)
+    item_end_date = Column(DateTime, nullable=True)
+    date_listed = Column(DateTime, nullable=True)
+    date_fetched = Column(DateTime, default=datetime.datetime.now, nullable=True)
+    image_urls = Column(String, nullable=True)
+
+# Native Metadata Table Mapping to enforce existence of historical tracking indexes
+from sqlalchemy import Table
+HistoricalMetricsTable = Table(
+    "historical_metrics",
+    Base.metadata,
+    Column("model_name", String, primary_key=True),
+    Column("timeframe", String, primary_key=True),
+    Column("condition_type", String, primary_key=True),
+    Column("total_units", Integer, nullable=False),
+    Column("min_item_price", Float, nullable=False),
+    Column("max_item_price", Float, nullable=False),
+    Column("avg_item_price", Float, nullable=False),
+    Column("med_item_price", Float, nullable=False),
+    Column("avg_shipping_cost", Float, nullable=False),
+    Column("avg_total_cost", Float, nullable=False),
+    Column("last_updated", DateTime, nullable=False)
+)

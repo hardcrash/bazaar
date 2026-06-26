@@ -281,7 +281,7 @@ class EbayScrapeClient:
     def _write_network_checkpoint(self, provider_key: str, status_code: int, raw_text: str) -> None:
         try:
             with open("raw_network_checkpoint.txt", "w", encoding="utf-8") as f:
-                f.write(f"TIMESTAMP: {datetime.datetime.now()}\nPROVIDER: {provider_key}\nSTATUS CODE: {status_code}\n")
+                f.write(f"TIMESTAMP: {datetime.datetime.datetime.now()}\nPROVIDER: {provider_key}\nSTATUS CODE: {status_code}\n")
                 f.write(f"RESPONSE LENGTH: {len(raw_text)}\n" + "-" * 50 + "\n")
                 f.write(raw_text if raw_text else "[EMPTY BODY]")
             logger.info("📡 Dropped full network diagnostic checkpoint to raw_network_checkpoint.txt")
@@ -913,7 +913,7 @@ class EbayScrapeClient:
         output_dir = "request_responses"
         os.makedirs(output_dir, exist_ok=True)
 
-        timestamp = datetime.now().strftime("%H%M%S_%f")
+        timestamp = datetime.datetime.now().strftime("%H%M%S_%f")
         clean_provider = str(provider_key).lower().replace(":", "_")
         filename = f"{timestamp}_{clean_provider}_{context}_status_{status_code}.html"
         full_path = os.path.join(output_dir, filename)
@@ -924,3 +924,7 @@ class EbayScrapeClient:
             logger.info(f"💾 Live network diagnostic snapshot committed -> {full_path}")
         except Exception as e:
             logger.error(f"Failed writing local debug snapshot matrix: {e}")
+
+    def _is_multisku_parent(self, *args, **kwargs) -> bool:
+        """Fallback stub filter for multi-sku components."""
+        return False
