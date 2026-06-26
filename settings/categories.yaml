@@ -1,0 +1,116 @@
+# settings/categories.yaml
+
+CPU:
+  strategy_class: "CpuStrategy"
+
+  # 🌟 Live Sourcing Queries: Targeted defect-first hunting terms
+  defect_queries: [
+    "AM4 bent",
+    "AM4 bent pins",
+    "AM4 broken pins",
+    "Ryzen bent pins"
+  ]
+
+  # 🌟 Valuation Baseline Queries: Specific high-value 5000-series AM4 chips
+  valid_models: [
+    "5800X"
+  ]
+
+#   valid_models: [
+#   "5950X",
+#   "5900XT",
+#   "5900 XT",
+#   "5900X",
+#   "5900 X",
+#   "5900",
+#   "5800X3D",
+#   "5800 X3D",
+#   "5800XT",
+#   "5800 XT",
+#   "5800X",
+#   "5800 X",
+#   "5800",
+#   "5700X3D",
+#   "5700 X3D",
+#   "5700X",
+#   "5700 X",
+#   "5600X3D",
+#   "5600 X3D",
+#   "5600XT",
+#   "5600 XT",
+#   "5600X",
+#   "5600 X",
+#   "5600"
+# ]
+
+  model_variants:
+    "5950X": ["5950X"]
+    "5900X": ["5900X", "5900XT", "5900"]
+    "5800X": ["5800X", "5800X3D", "5800XT", "5800"]
+    "5700X": ["5700X", "5700X3D"]
+    "5600X": ["5600X", "5600X3D", "5600XT", "5600"]
+
+  # 🌟 Multi-Sku Matrix Pool: Models to check for cross-bleed dropdown listings
+  multisku_models: [
+    "5600X", "5700X", "5700X3D", "5800X", "5800X3D", "5900X", "5950X"
+  ]
+
+  brands: ["AMD"]
+
+  search_format: "Ryzen {model}"
+
+  # Keeps regex focused solely on capturing Zen 3 (5000 series) variants
+  patterns: ["RYZEN(?:\\s+[579])?\\s+(5\\d{3}(?:X3D|X|G|GE|XT)?)\\b"]
+
+  noise_words: ["DDR4", "DDR5", "CPU", "SOCKET"]
+
+  # Native eBay API exclusion filters compiled at runtime (Keeps keyword count under 15)
+  blacklist_words: [
+    # "BUNDLE", "LAPTOP", "PC", "BAREBONES", "SYSTEM", "OPTANE", "P4800X", "P5800X", "HP IC"
+  ]
+
+  local_noise_blacklist: [
+    # --- Structural Overlaps ---
+    "SAW", "BLADE", "HSS", "TOOL STEEL", "MACHINERY", "WAVE",
+    "ROCKFORD", "FOSGATE", "AMPLIFIER", "AMP COMBO", "MOBO COMBO",
+    "SUPPORT FOR", "COMPATIBLE WITH", "DIXIE", "MA5800", "YAMAYO",
+    "MOOG JOINT", "VVG",
+
+    # --- Industrial & Heavy Machinery Part Collisions ---
+    "CUMMINS", "FUEL INJECTOR", "FUEL NOZZLE", "GASKET", "VALVE",
+    "HONDA CARBURETOR", "ENGINE", "GARDEN MOWER", "FLANGE PUMP",
+    "BEARING SEAL",
+
+    # --- Component-Only / Accessory Cross-listings ---
+    "INTEL", "XEON", "I7", "I9", "NVIDIA", "GEFORCE", "RTX",
+    "AIO COOLER", "THERMAL PASTE", "PASTE ONLY",
+    "BOX ONLY", "EMPTY BOX", "PACKAGING ONLY", "RETAIL BOX ONLY",
+    "FAN ONLY", "COOLER ONLY", "HEATSINK ONLY", "NO CPU", "LESS CPU", "OPTANE", 
+    "P4800X", "P5800X", "HP IC",
+
+    # --- Full System Exclusions ---
+    "FULL TOWER", "GAMING RIG", "GAMING PC", "FULL PC", "DESKTOP PC",
+    "SYSTEM BUILT", "DESKTOP TOWER", "BUNDLE", "LAPTOP", "PC", "BAREBONES", "SYSTEM"
+  ]
+
+  # 🌟 Fixed Indentation: Nested cleanly inside the CPU category context
+  active_harvest:
+    enabled: true
+    limit_per_sweep: 200
+    min_price: 50
+    max_price: 650  # Fixed threshold to encapsulate high-end 5950X chips safely
+    step_size: 10.0
+    ebay_category_id: 164
+    ebay_condition: [2000, 3000, 7000]
+
+  historical_harvest:
+    enabled: true
+    limit_per_sweep: 2000
+    require_sold: true
+    step_size: 10.0     # 🌟 Modularity Win: Categorical step increments managed here
+    min_price_broken: 80
+    max_price_broken: 100
+    min_price_used: 110
+    max_price_used: 130 # Adjusted upwards to catch high-end functional historical sales
+    ebay_category_id: [164]
+    ebay_condition: []

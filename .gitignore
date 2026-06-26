@@ -1,0 +1,49 @@
+# Virtual Environment
+.venv/
+.venv-bazaar-data/
+venv/
+ENV/
+pyvenv.cfg
+
+# Python Caches & Build Files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+
+# Local Project Data & Databases
+*.db
+*.db-journal
+*.db-wal
+consolidated_bazaar_metrics.json
+*_consolidated_bazaar_metrics.json
+market_items.json
+market_items.csv
+raw_network_checkpoint.txt
+isolated_test_output.html
+debug_scraperapi_response.html
+
+# User Configurations & Environment Variables
+.env
+.env.*
+config.yaml
+config_credentials.yaml
+
+# IDEs & System Files
+.vscode/
+.idea/
+.DS_Store
+
+# Editor Swap & Backup Files (Vim, Kate, etc.)
+*.swp
+*.swo
+*.*.swp
+.*.kate-swp
+*~
+
+# Log files
+*.log
+logs/
+!logs/.gitkeep
+*.html
