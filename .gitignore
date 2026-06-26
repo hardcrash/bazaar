@@ -23,6 +23,7 @@ market_items.csv
 raw_network_checkpoint.txt
 isolated_test_output.html
 debug_scraperapi_response.html
+*.csv
 
 # User Configurations & Environment Variables
 .env
