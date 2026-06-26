@@ -11,6 +11,7 @@ import datetime
 import requests
 import os
 import sys
+import yaml
 from typing import List, Optional, Dict, Any, Tuple
 from bs4 import BeautifulSoup, Tag
 from loguru import logger
@@ -28,62 +29,19 @@ class EbayScrapeClient:
     Multi-SKU Expansion, and Hydrating records into higher data grades.
     """
 
-    # --- Hardened System Selection Matrix ---
-    # Unified configuration hooks engineered to seamlessly extract structural values from traditional 
-    # desktop grids, minimal mobile lists, and highly nested alternative modular card layouts simultaneously.
-    EBAY_SELECTORS_MATRIX = {
-        "rivers": [
-            "div.srp-river-results",
-            "ul.srp-results",
-            "#mainContent",
-            ".srp-main-content",
-            "#srp-river-results"
-        ],
-        "containers": [
-            "li.s-card",                                 # Alternative modular card outer row container
-            "div.su-card-container",                     # Alternative inner component structural wrapper
-            "li.s-item",                                 # Standard Desktop grid/list row wrapper
-            "div.s-item__wrapper",                       # Standard Desktop inner block element wrapper
-            "ul.srp-results > li",                       # Baseline structural container catch-all
-            "div[class*='item-container']",              # Dynamic wildcard: generic item row fallback
-            "div[class*='card-container']"               # Dynamic wildcard: generic layout component fallback
-        ],
-        "titles": [
-            ".s-card__title",                            # Cleanest atomic modular card item text line
-            ".s-item__title",                            # Standard Desktop row title text path
-            "h3.s-item__title",                          # Explicit sub-header layout variation tag
-            "[class*='card__title']",                    # Fluid variant fallback: card style title matchers
-            "[class*='item__title']",                    # Fluid variant fallback: row style title matchers
-            "span[role='heading']"                       # High-stability accessible reader fallback anchor
-        ],
-        "prices": [
-            "span.s-card__price",                        # Precise atomic match for compound typography lists
-            ".s-card__price",                            # Core modular layout layout tier pricing tag
-            ".s-item__price.INLINE",                     # Live market tracking standard inline pricing component
-            ".s-item__price.POSITIVE",                   # Historic standard green "Sold" pricing designator
-            ".s-item__price .POSITIVE",                  # Nested structural historic green price identifier
-            ".s-item__price",                            # Unfiltered generic desktop fallback pricing anchor
-            "[class*='item__price']",                    # Structural safety net: shifting desktop element paths
-            "[class*='card__price']"                     # Structural safety net: shifting alternative element paths
-        ],
-        "shipping": [
-            ".su-card-container__attributes__secondary", # Isolated meta block capturing clean alternative metrics
-            ".s-item__shipping",                         # Standard desktop logistic text content wrapper
-            ".s-item__logisticsCost",                    # Legacy platform API backend raw logistics element tag
-            "[class*='shipping']",                       # Broad fallback: wildcard text string cost parsing
-            "[class*='logistics']",                      # Broad fallback: wildcard text string cost parsing
-            ".s-card__attribute-row .secondary"          # Low-level semantic markup component safety net
-        ],
-        "sellers": [
-            ".su-card-container__attributes__secondary", # Alternative shared layout vendor detail field mapping
-            ".s-item__seller-info",                      # Standard desktop vendor metrics and store rating container
-            "[class*='seller-info']",                    # Universal fallback: fluid vendor tag variations
-            "[class*='seller__info']"                     # Universal fallback: fluid vendor tag variations
-        ]
-    }
-    def __init__(self, config):
+    def __init__(self, config, config_path: Optional[str] = None):
         self.config = config
         self.provider = EbayScraperProvider(config=config)
+        
+        # 📄 Hardened Selectors Matrix Orchestration
+        # Looks for settings/selectors.yaml in the project directory
+        if config_path:
+            self.config_path = Path(config_path)
+        else:
+            self.config_path = Path("settings/selectors.yaml")
+            
+        self.EBAY_SELECTORS_MATRIX: Dict[str, List[str]] = {}
+        self.load_selectors_matrix()
 
     def refresh_account_balances(self):
         """Proxy binding method mapping down onto the Infrastructure provider."""
@@ -92,6 +50,37 @@ class EbayScrapeClient:
     def get_credit_summary(self) -> Dict[str, int]:
         """Proxy binding method mapping down onto the Infrastructure provider."""
         return self.provider.get_credit_summary()
+    
+    def load_selectors_matrix(self) -> None:
+        """Loads or reloads the extraction selectors directly from the local YAML configuration."""
+        try:
+            if not self.config_path.exists():
+                raise FileNotFoundError(f"Selectors configuration file not found at {self.config_path}")
+                
+            with open(self.config_path, "r", encoding="utf-8") as f:
+                config_data = yaml.safe_load(f)
+                if not config_data or "ebay" not in config_data:
+                    raise KeyError("Malformed configuration: Missing root 'ebay' selector block.")
+                
+                # Dig straight into the platform namespace layer
+                self.EBAY_SELECTORS_MATRIX = config_data["ebay"]
+                logger.info(f"Successfully loaded eBay selector matrix from {self.config_path}")
+                
+        except Exception as e:
+            logger.error(f"⚠️ Failed to load selectors matrix: {e}. Falling back to internal defaults.")
+            # Safety net configuration fallback if file reads fail
+            self.EBAY_SELECTORS_MATRIX = {
+                "rivers": ["div.srp-river-results", "ul.srp-results"],
+                "containers": ["li.s-item", "div.s-item__wrapper"],
+                "titles": [".s-item__title", "h3.s-item__title"],
+                "prices": [".s-item__price"],
+                "shipping": [".s-item__shipping"],
+                "sellers": [".s-item__seller-info"]
+            }
+
+    def get_selectors_for(self, tier: str) -> List[str]:
+        """Helper to safely retrieve a specific selector array tier with fallback protection."""
+        return self.EBAY_SELECTORS_MATRIX.get(tier, [])
 
     def search_historical_sales(
         self,
