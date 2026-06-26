@@ -1,0 +1,43 @@
+# settings/selectors.yaml
+
+ebay:
+  containers:
+    - "li.s-card"                                 # Alternative modular card outer row container
+    - "div.su-card-container"                     # Alternative inner component structural wrapper
+    - "li.s-item"                                 # Standard Desktop grid/list row wrapper
+    - "div.s-item__wrapper"                       # Standard Desktop inner block element wrapper
+    - "ul.srp-results > li"                       # Baseline structural container catch-all
+    - "div[class*='item-container']"              # Dynamic wildcard: generic item row fallback
+    - "div[class*='card-container']"               # Dynamic wildcard: generic layout component fallback
+
+  titles:
+    - ".s-card__title"                            # Cleanest atomic modular card item text line
+    - ".s-item__title"                            # Standard Desktop row title text path
+    - "h3.s-item__title"                          # Explicit sub-header layout variation tag
+    - "[class*='card__title']"                    # Fluid variant fallback: card style title matchers
+    - "[class*='item__title']"                    # Fluid variant fallback: row style title matchers
+    - "span[role='heading']"                       # High-stability accessible reader fallback anchor
+
+  prices:
+    - "span.s-card__price"                        # Precise atomic match for compound typography lists
+    - ".s-card__price"                            # Core modular layout layout tier pricing tag
+    - ".s-item__price.INLINE"                     # Live market tracking standard inline pricing component
+    - ".s-item__price.POSITIVE"                   # Historic standard green "Sold" pricing designator
+    - ".s-item__price .POSITIVE"                  # Nested structural historic green price identifier
+    - ".s-item__price"                            # Unfiltered generic desktop fallback pricing anchor
+    - "[class*='item__price']"                    # Structural safety net: shifting desktop element paths
+    - "[class*='card__price']"                     # Structural safety net: shifting alternative element paths
+
+  shipping:
+    - ".su-card-container__attributes__secondary" # Isolated meta block capturing clean alternative metrics
+    - ".s-item__shipping"                         # Standard desktop logistic text content wrapper
+    - ".s-item__logisticsCost"                    # Legacy platform API backend raw logistics element tag
+    - "[class*='shipping']"                       # Broad fallback: wildcard text string cost parsing
+    - "[class*='logistics']"                      # Broad fallback: wildcard text string cost parsing
+    - ".s-card__attribute-row .secondary"          # Low-level semantic markup component safety net
+
+  sellers:
+    - ".su-card-container__attributes__secondary" # Alternative shared layout vendor detail field mapping
+    - ".s-item__seller-info"                      # Standard desktop vendor metrics and store rating container
+    - "[class*='seller-info']"                    # Universal fallback: fluid vendor tag variations
+    - "[class*='seller__info']"                     # Universal fallback: fluid vendor tag variations
