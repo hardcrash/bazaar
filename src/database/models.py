@@ -48,7 +48,7 @@ class ActiveMarketItemModel(Base):
     date_fetched = Column(DateTime, default=datetime.datetime.now, nullable=False)
 
 
-class HistMarketItemModel(Base):
+class HistoricalMarketItemModel(Base):
     """
     Frozen execution data logging sold, completed, or closed transactional item entries.
     """

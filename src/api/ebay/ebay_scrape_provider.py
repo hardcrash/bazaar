@@ -4,9 +4,14 @@
 # billing/balance check updates, rate-limiting rules, and runtime circuit breakers.
 
 import time
+import random
 import requests
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 from loguru import logger
+
+from src.api.ebay.providers.scrapeops_provider import ScrapeOpsProvider
+from src.api.ebay.providers.scraperapi_provider import ScraperApiProvider
+
 
 class EbayScraperProvider:
     """
@@ -116,12 +121,10 @@ class EbayScraperProvider:
 
                 # --- ScrapeOps Balance Engine ---
                 elif "scrapeops" in name_lower:
-                    # ✅ FIXED: Routed to backend.scrapeops.io analytics endpoint
                     res = requests.get(f"https://backend.scrapeops.io/v1/proxy/account/usage?api_key={api_key}", timeout=5)
                     
                     if res.status_code == 200:
                         data = res.json()
-                        # ScrapeOps returns credit balance info wrapped inside a top-level 'data' object wrapper
                         inner_data = data.get("data", {}) if isinstance(data, dict) else {}
                         
                         if "api_credits_remaining" in inner_data:
@@ -129,7 +132,6 @@ class EbayScraperProvider:
                         elif "remaining_credits" in inner_data:
                             self._runtime_credits[name] = int(inner_data.get("remaining_credits", 0))
                         else:
-                            # Direct check fallback on root structure if schema variations are active
                             remaining = data.get("api_credits_remaining", data.get("remaining_credits"))
                             if remaining is not None:
                                 self._runtime_credits[name] = int(remaining)
@@ -148,6 +150,72 @@ class EbayScraperProvider:
                 self._runtime_credits[name] = 0
 
         self._balances_already_refreshed = True
+
+    def execute_request(self, target_url: str, strategy: str, max_retries: int = 3) -> Tuple[int, str]:
+        """
+        Orchestrates network failovers across proxy pools based on credit capacity sequence.
+        Returns a structured response tuple of (status_code, response_text).
+        """
+        self.enforce_politeness()
+
+        # Build execution sequence: non-blacklisted pools sorted highest-credits first
+        available_providers = [
+            p for p in self._runtime_credits.keys() 
+            if p not in self._active_blacklist and self._runtime_credits[p] > 0
+        ]
+        provider_sequence = sorted(available_providers, key=lambda k: self._runtime_credits[k], reverse=True)
+
+        if not provider_sequence:
+            logger.critical("🚨 Execution Interrupted: All downstream proxy configuration targets exhausted or blacklisted.")
+            return 503, ""
+
+        proxy_rotation = getattr(self.config, "proxy_rotation", {})
+        providers_cfg = proxy_rotation.get("providers", {}) if isinstance(proxy_rotation, dict) else {}
+
+        for provider_key in provider_sequence:
+            p_cfg = providers_cfg.get(provider_key, {})
+
+            for attempt in range(max_retries):
+                try:
+                    if "scraperapi" in provider_key.lower():
+                        engine = ScraperApiProvider(self.config, p_cfg)
+                    elif "scrapeops" in provider_key.lower():
+                        engine = ScrapeOpsProvider(self.config, p_cfg)
+                    else:
+                        logger.error(f"❌ Unknown or unsupported provider key signature: {provider_key}")
+                        break
+
+                    request_url, payload, active_headers = engine.build_request_params(target_url)
+                    logger.debug(f"🛸 [{provider_key}] Dispatching attempt {attempt + 1}/{max_retries} -> {target_url}")
+
+                    response = requests.get(
+                        request_url,   
+                        params=payload,
+                        headers=active_headers,
+                        timeout=self.timeout
+                    )
+
+                    self.update_quota_header(provider_key, response)
+
+                    if response.status_code in [401, 403, 429]:
+                        logger.warning(f"🔒 Token depletion or firewall block (Status {response.status_code}) on {provider_key}. Liquidating pool access.")
+                        self.flag_provider_exhausted(provider_key)
+                        break  # Break out of retries for this provider, drop back to next sequence target
+
+                    raw_text = response.text or ""
+                    if response.status_code == 200:
+                        if "captcha" in raw_text.lower():
+                            logger.warning(f"⚠️ Soft CAPTCHA intercepted on {provider_key} leaf hydration stream. Retrying attempt...")
+                            continue
+                        return response.status_code, raw_text
+
+                    logger.error(f"🚨 Structural anomaly packet received (Status {response.status_code}) on {provider_key}.")
+
+                except Exception as e:
+                    logger.error(f"Circuit breaker loop sweep failed on {provider_key}: {e}")
+                    continue
+
+        return 500, ""
 
     def get_credit_summary(self) -> Dict[str, int]:
         """Returns a snapshot of currently known remaining credit allowances."""

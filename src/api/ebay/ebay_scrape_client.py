@@ -32,6 +32,13 @@ class EbayScrapeClient:
     # Unified configuration hooks engineered to seamlessly extract structural values from traditional 
     # desktop grids, minimal mobile lists, and highly nested alternative modular card layouts simultaneously.
     EBAY_SELECTORS_MATRIX = {
+        "rivers": [
+            "div.srp-river-results",
+            "ul.srp-results",
+            "#mainContent",
+            ".srp-main-content",
+            "#srp-river-results"
+        ],
         "containers": [
             "li.s-card",                                 # Alternative modular card outer row container
             "div.su-card-container",                     # Alternative inner component structural wrapper
@@ -93,103 +100,28 @@ class EbayScrapeClient:
         max_price: float,
         category_id: str,
         model_name: str,
-        strategy: Any,
+        strategy: str,
         conditions: Optional[List[int]] = None
     ) -> List[MarketItem]:
-        """
-        Executes a targeted historical sales sweep on eBay by compiling criteria, 
-        routing requests dynamically via weighted proxy gateways, and parsing results.
-        """
-        self.provider.enforce_politeness()
+        """Executes a historical sales sweep by relying on the provider engine for transport."""
         target_ebay_url = self._build_target_url(query, min_price, max_price, category_id, conditions)
         logger.info(f"🔗 Target Upstream eBay URL Generated: {target_ebay_url}")
 
-        proxy_config = getattr(self.provider.config, "proxy_rotation", {})
-        configured_providers = proxy_config.get("providers", {})
-
-        raw_sequence = self._resolve_provider_sequence(configured_providers, strategy)
-
-        # CAPACITY-BASED ROUTING INTERCEPTION
-        provider_sequence = sorted(
-            raw_sequence,
-            key=lambda k: self.provider._runtime_credits.get(k, 0),
-            reverse=True
+        # Let the provider handle the massive trial-and-error routing network
+        status_code, response_html = self.provider.execute_request(
+            target_url=target_ebay_url, 
+            strategy=strategy
         )
 
-        response_html = None
+        # Drop a real-time network transaction snapshot to disk for diagnostics
+        self._write_network_checkpoint(strategy, status_code, response_html)
 
-        for provider_key in provider_sequence:
-            current_balance = self.provider._runtime_credits.get(provider_key, 0)
+        # Run content validation checks using internal layout audit mechanisms
+        if not self._validate_html_integrity(strategy, status_code, response_html):
+            logger.error("❌ High-grade scraping execution chain returned empty or invalid HTML payload structures.")
+            return []
 
-            if current_balance <= 0:
-                logger.warning(f"Provider {provider_key} exhausted ({current_balance} credits). Skipping configuration block.")
-                self.provider.flag_provider_exhausted(provider_key)
-                continue
-
-            try:
-                provider_cfg = configured_providers.get(provider_key, {})
-                provider_engine = self._instantiate_provider_engine(provider_key, provider_cfg)
-                if not provider_engine:
-                    continue
-
-                request_url, payload, active_headers = provider_engine.build_request_params(target_ebay_url)
-
-                logger.success(
-                    f"🚀 ROUTING CHOICE | Active Provider Strategy: [{provider_key.upper()}] "
-                    f"(Credits: {current_balance})"
-                )
-                logger.debug(f"⚙️ Compiled Request URL: {request_url}")
-                self._log_sanitized_payload(payload)
-
-                logger.info(f"📡 Dispatching outbound HTTP request via {provider_key}...")
-                response = requests.get(
-                    request_url,
-                    params=payload,
-                    headers=active_headers if active_headers else None,
-                    timeout=self.provider.timeout
-                )
-
-                raw_text = response.text or ""
-                logger.info(
-                    f"📥 RESPONSE RECEIVED | Provider: [{provider_key.upper()}] | "
-                    f"Status Code: {response.status_code} | Payload Size: {len(raw_text)} characters"
-                )
-
-                # INLINE DIAGNOSTIC DUMP
-                if any(flag in sys.argv for flag in ["--dev", "-dev", "-d"]):
-                    self._dump_network_response(raw_text, response.status_code, provider_key, context="search")
-                    self._write_network_checkpoint(provider_key, response.status_code, raw_text)
-
-                if hasattr(self.provider, "update_quota_header"):
-                    self.provider.update_quota_header(provider_key, response)
-
-                if response.status_code in [401, 403, 429]:
-                    logger.error(f"🔒 Authentication rejection / Quota Exceeded (Status {response.status_code}) on {provider_key}.")
-                    if hasattr(self.provider, "flag_provider_exhausted"):
-                        self.provider.flag_provider_exhausted(provider_key)
-                    continue
-
-                if not self._validate_html_integrity(provider_key, response.status_code, raw_text):
-                    continue
-
-                response_html = raw_text
-                break
-
-            except Exception as loop_err:
-                logger.error(f"Provider {provider_key} failed execution loop network transport layer: {loop_err}")
-                continue        
-
-        if response_html:
-            logger.info("🚀 Payload confirmed. Handing off raw markup stream to _parse_ebay_html().")
-            return self._parse_ebay_html(
-                html_content=response_html,
-                model_name=model_name,
-                category_id=category_id,
-                is_sold=True
-            )
-
-        logger.critical("❌ All configured proxy networks exhausted, unauthorized, or failing layout validation.")
-        return []
+        return self._parse_ebay_html(response_html, model_name, category_id, is_sold=True)
 
     def _build_target_url(
         self, 
@@ -424,18 +356,12 @@ class EbayScrapeClient:
 
         self._log_pipeline_metrics(len(listings), len(results), strategy_used, metrics)
         return results
-
+    
     def _isolate_listing_nodes(self, soup: BeautifulSoup) -> Tuple[List[Any], str]:
-        river_selectors = [
-            "div.srp-river-results",
-            "ul.srp-results",
-            "#mainContent",
-            ".srp-main-content",
-            "#srp-river-results"
-        ]
-        
+        """Isolates the listing elements out of the DOM, pulling layout parameters directly from the selector matrix."""
         river_scope = None
-        for r_sel in river_selectors:
+        # FIX: Point to the dynamic selectors matrix key to prevent NameError
+        for r_sel in self.EBAY_SELECTORS_MATRIX.get("rivers", []):
             container = soup.select_one(r_sel)
             if container:
                 river_scope = container
@@ -504,12 +430,14 @@ class EbayScrapeClient:
         return [], "None"
 
     def _extract_title(self, item: Tag) -> Optional[str]:
+        """Extracts the item title text string from the DOM matrix layer targets."""
         raw_text = None
         for selector in self.EBAY_SELECTORS_MATRIX["titles"]:
             title_node = item.select_one(selector)
             if title_node:
-                if title_node.find('span'):
-                    inner_spans = title_node.find_all('span')
+                # Optimized to extract nested styling spans, falling back cleanly if none are found
+                inner_spans = title_node.find_all('span')
+                if inner_spans:
                     raw_text = inner_spans[-1].get_text(strip=True)
                 else:
                     raw_text = title_node.get_text(strip=True)
@@ -531,6 +459,7 @@ class EbayScrapeClient:
         return sanitized.strip()
 
     def _extract_identifiers(self, item: Tag) -> Tuple[Optional[str], Optional[str]]:
+        """Isolates unique platform identifiers and absolute listings urls without tracking parameters."""
         item_id = item.get('data-id') or item.get('data-itemid')
         
         link_elem = (
@@ -637,66 +566,14 @@ class EbayScrapeClient:
         return metrics
 
     def dispatch_scrape(self, target_url: str, max_retries: int = 3) -> Optional[str]:
-        for attempt in range(max_retries):
-            provider = getattr(self.provider, "current_strategy", "weighted_random")
-            if provider == "weighted_random":
-                provider = "scraperapi_gmail_cmk" # Fallback explicit string hook if unresolved
-
-            try:
-                proxy_rotation = getattr(self.config, "proxy_rotation", {})
-                providers_cfg = proxy_rotation.get("providers", {}) if isinstance(proxy_rotation, dict) else getattr(proxy_rotation, "providers", {})
-                p_cfg = providers_cfg.get(provider, {})        
-
-                if "scraperapi" in provider.lower():
-                    provider_engine = ScraperApiProvider(self.provider.config, p_cfg)
-                elif "scrapeops" in provider.lower():
-                    provider_engine = ScrapeOpsProvider(self.provider.config, p_cfg)
-                else:
-                    logger.error(f"❌ Unknown or unsupported provider target engine signature: {provider}")
-                    break
-
-                request_url, payload, active_headers = provider_engine.build_request_params(target_url)
-                logger.debug(f"[{attempt + 1}/{max_retries}] Dispatching sub-page scrape to {provider}")
-
-                timeout_val = getattr(self.provider, "timeout", 20)
-                response = requests.get(
-                    request_url,
-                    params=payload,
-                    headers=active_headers,
-                    timeout=timeout_val
-                )
-
-                if hasattr(self.provider, "update_quota_header"):
-                    self.provider.update_quota_header(provider, response)
-
-                raw_text = response.text or ""
-
-                if response.status_code == 200:
-                    logger.info(f"📥 RESPONSE RECEIVED | Provider: [{provider}] | Status Code: 200")
-                    
-                    if any(flag in sys.argv for flag in ["--dev", "-dev", "-d"]):
-                        self._dump_network_response(raw_text, response.status_code, provider, context="leaf")
-                        self._write_network_checkpoint(provider, response.status_code, raw_text)
-
-                    if "captcha" not in raw_text.lower():
-                        return raw_text
-                    logger.warning(f"⚠️ {provider} hit a soft CAPTCHA block during deep leaf hydration.")
-
-                elif response.status_code in [401, 403]:
-                    logger.error(f"🔒 Token pool depleted on {provider}. Liquidating availability.")
-                    if hasattr(self.provider, "flag_provider_exhausted"):
-                        self.provider.flag_provider_exhausted(provider)
-                    break
-                else:
-                    logger.error(f"🚨 Severe structural server anomaly ({response.status_code}) on {provider}.")
-                    if hasattr(self.provider, "flag_provider_exhausted"):
-                        self.provider.flag_provider_exhausted(provider)
-
-            except Exception as e:
-                logger.error(f"Circuit breaker sweep attempt failed: {e}")
-
+        """Streamlined legacy deep-leaf scraper target hook."""
+        strategy = getattr(self.provider, "current_strategy", "weighted_random")
+        status_code, response_html = self.provider.execute_request(target_url, strategy, max_retries)
+        
+        if status_code == 200 and "captcha" not in response_html.lower():
+            return response_html
         return None
-    
+        
     def _log_pipeline_metrics(self, total: int, hydrated: int, strategy: str, metrics: dict):
         logger.info(f"📊 Loop complete. Hydrated {hydrated}/{total} items using strategy [{strategy}].")
         if any(count > 0 for count in metrics.values()):
