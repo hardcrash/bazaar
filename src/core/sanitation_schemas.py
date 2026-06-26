@@ -1,4 +1,11 @@
 # src/core/sanitation_schemas.py
+"""
+Bazaar Sourcing Pipeline Sanitation Schemas
+
+This module defines the validation structures and data transformation rules 
+for raw API inputs. It leverages Pydantic models to strip raw text anomalies, 
+normalize currency formatting representations, and filter platform condition IDs.
+"""
 
 import re
 from pydantic import BaseModel, Field, field_validator
@@ -15,11 +22,14 @@ class EbayAPIItemSchema(BaseModel):
     feedback_score: int = Field(alias="feedbackScore")
     feedback_percent: float = Field(alias="positiveFeedbackPercent")
 
-    # 🌟 Transformer: Strip titles of leading/trailing junk spacing
+    # 🌟 Transformer: Collapses internal whitespace, tabs, and newlines down to single spaces
     @field_validator("title", mode="after")
     @classmethod
     def clean_whitespace(cls, v: str) -> str:
-        return v.strip() if v else v
+        if v:
+            # Replaces any length of whitespace characters (\t, \n, spaces) with one space
+            return re.sub(r'\s+', ' ', v).strip()
+        return v
 
     # 🌟 Transformer: Strips currency symbols, commas, and normalizes numeric texts
     @field_validator("price_string", "shipping_string", mode="before")

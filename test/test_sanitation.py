@@ -1,10 +1,17 @@
 # test/test_sanitation.py
+"""
+Bazaar Ingestion Sanitation and Schema Test Suite
+
+This module provides field-level parsing validation, currency string cleaning checks, 
+and text formatting guardrail metrics. It also checks formatting bounds for 
+ActiveMarketItemModel string representations.
+"""
 
 import pytest
 from pydantic import ValidationError
 from src.core.sanitation_schemas import EbayAPIItemSchema
 import datetime
-from src.database.models import MarketItemModel
+from src.database.models import ActiveMarketItemModel
 
 @pytest.fixture
 def valid_ebay_json():
@@ -62,22 +69,17 @@ def test_repr_line_length_bounds_enforcement():
     __repr__ output such that no individual line exceeds 80 characters.
     """
     # Create an artificially data-dense record instance to force character overflow
-    dense_item = MarketItemModel(
+    dense_item = ActiveMarketItemModel(
         item_id="v1-999999999999-99",
         model_name="AMD_RYZEN_9_5950X_EXTREME_EDITION",
         category="COMPUTING_HARDWARE_PROCESSORS_CPUS",
-        source_platform="ebay_bazaar_edge_collector",
         raw_title="AMD Ryzen 9 5950X 16-Core 32-Thread Unlocked Desktop Processor New",
         title="AMD Ryzen 9 5950X (New)",
         price=549.99,
         shipping_cost=15.45,
         total_cost=565.44,
         currency="USD",
-        condition_id=1000,
-        is_sold=True,
         seller_username="premium_silicon_distribution_hub",
-        feedback_score=987654,
-        feedback_percentage=99.98,
         is_top_rated=True,
         date_fetched=datetime.datetime(2026, 6, 11, 12, 0, 0),
         process_state="PROCESSED_BY_DEEP_HARVEST_PIPELINE_ENGINE"
@@ -97,15 +99,14 @@ def test_repr_line_length_bounds_enforcement():
             f"Length is {line_length} chars (Max: 80). Content: '{line}'"
         )
 
+def test_title_sanitation_removes_embedded_whitespace_clutter(valid_ebay_json):
+    """
+    Validates that messy titles featuring internal spacing clutter, tabs, or newline
+    escapes are normalized cleanly into predictable single-spaced strings.
+    """
+    valid_ebay_json["title"] = "AMD\tRyzen   7 \n 5800X  Processor  "
 
-    def test_title_sanitation_removes_embedded_whitespace_clutter(valid_ebay_json):
-        """
-        Validates that messy titles featuring internal spacing clutter, tabs, or newline
-        escapes are normalized cleanly into predictable single-spaced strings.
-        """
-        valid_ebay_json["title"] = "AMD\tRyzen   7 \n 5800X  Processor  "
+    schema = EbayAPIItemSchema(**valid_ebay_json)
 
-        schema = EbayAPIItemSchema(**valid_ebay_json)
-
-        # Internal spacing layout is collapsed down to simple single-character bounds
-        assert schema.title == "AMD Ryzen 7 5800X Processor"
+    # Internal spacing layout is collapsed down to simple single-character bounds
+    assert schema.title == "AMD Ryzen 7 5800X Processor"    

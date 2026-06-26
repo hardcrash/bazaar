@@ -281,7 +281,7 @@ class EbayScrapeClient:
     def _write_network_checkpoint(self, provider_key: str, status_code: int, raw_text: str) -> None:
         try:
             with open("raw_network_checkpoint.txt", "w", encoding="utf-8") as f:
-                f.write(f"TIMESTAMP: {datetime.datetime.datetime.now()}\nPROVIDER: {provider_key}\nSTATUS CODE: {status_code}\n")
+                f.write(f"TIMESTAMP: {datetime.datetime.now()}\nPROVIDER: {provider_key}\nSTATUS CODE: {status_code}\n")
                 f.write(f"RESPONSE LENGTH: {len(raw_text)}\n" + "-" * 50 + "\n")
                 f.write(raw_text if raw_text else "[EMPTY BODY]")
             logger.info("📡 Dropped full network diagnostic checkpoint to raw_network_checkpoint.txt")

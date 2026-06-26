@@ -2,28 +2,61 @@
 Bazaar Database Schema Models
 
 This module defines the relational database layout for the Bazaar persistence layer using 
-SQLAlchemy ORM. These model schemas mirror the fields validated by our Pydantic domain models, 
-ensuring structural integrity and efficient indexing when writing or querying items 
-from the local SQLite engine.
+SQLAlchemy ORM. It establishes a dual-table structure to separate active live market sweeps 
+from historical transactional logging entries.
 """
 
 import datetime
-from sqlalchemy import Column, String, Float, Integer, DateTime, Boolean
+from sqlalchemy import Column, String, Float, Integer, DateTime, Boolean, Table
 from sqlalchemy.orm import declarative_base
 
 # Modernized SQLAlchemy 2.0 Base Declaration to resolve deprecation warnings
 Base = declarative_base()
 
-class MarketItemModel(Base):
+class ActiveMarketItemModel(Base):
     """
-    Relational database model representing the 'market_items' physical disk table.
-Tracks structural payload telemetry state values across data grades.
-"""
-    __tablename__ = "market_items"
+    Live target monitoring pool tracking current active listings on market platforms.
+    """
+    __tablename__ = "active_market_items"
 
     # Core Identity Identifiers
     item_id = Column(String, primary_key=True, index=True)
-    model_name = Column(String, nullable=False)
+    model_name = Column(String, nullable=False, index=True)
+    category = Column(String, nullable=False)
+
+    # Textual Information
+    raw_title = Column(String, nullable=False)
+    title = Column(String, nullable=False)
+
+    # Pricing Metrics
+    price = Column(Float, default=0.0, nullable=False)
+    shipping_cost = Column(Float, default=0.0, nullable=True)
+    total_cost = Column(Float, default=0.0, nullable=False)
+    currency = Column(String, default="USD", nullable=False)
+
+    # Structural & Seller Telemetry Flags
+    item_url = Column(String, default="", nullable=True)
+    seller_username = Column(String, nullable=True)
+    is_top_rated = Column(Boolean, default=False, nullable=True)
+    
+    # Live variables subject to mutation passes
+    bid_count = Column(Integer, default=0, nullable=True)
+    quantity_available = Column(Integer, default=1, nullable=False)
+    
+    # Pipeline Management
+    process_state = Column(String, default="ACTIVE", nullable=False)
+    date_fetched = Column(DateTime, default=datetime.datetime.now, nullable=False)
+
+
+class HistMarketItemModel(Base):
+    """
+    Frozen execution data logging sold, completed, or closed transactional item entries.
+    """
+    __tablename__ = "historical_market_items"
+
+    # Core Identity Identifiers
+    item_id = Column(String, primary_key=True, index=True)
+    model_name = Column(String, nullable=False, index=True)
     category = Column(String, nullable=False)
 
     # Textual Information
@@ -68,8 +101,8 @@ Tracks structural payload telemetry state values across data grades.
     date_fetched = Column(DateTime, default=datetime.datetime.now, nullable=True)
     image_urls = Column(String, nullable=True)
 
+
 # Native Metadata Table Mapping to enforce existence of historical tracking indexes
-from sqlalchemy import Table
 HistoricalMetricsTable = Table(
     "historical_metrics",
     Base.metadata,

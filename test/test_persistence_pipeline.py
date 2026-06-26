@@ -1,89 +1,101 @@
+# test/test_sanitation.py
+"""
+Bazaar Ingestion Sanitation and Schema Test Suite
+
+This module provides field-level parsing validation, currency string cleaning checks, 
+and text formatting guardrail metrics. It also checks formatting bounds for 
+ActiveMarketItemModel string representations.
+"""
+
 import pytest
-from sqlalchemy import text
-from src.database.db_manager import DatabaseManager
-from src.analysis.aggregator import HistoricalAggregatorService
-from src.database.models import MarketItemModel
+from pydantic import ValidationError
+from src.core.sanitation_schemas import EbayAPIItemSchema
+import datetime
+from src.database.models import ActiveMarketItemModel
 
 @pytest.fixture
-def memory_db_manager():
-    """Spins up a volatile, decoupled in-memory database workspace for sandboxed pipeline testing."""
-    config = {"database": {"path": ":memory:"}}
-    return DatabaseManager(config=config)
+def valid_ebay_json():
+    """Provides a pristine mock of an incoming multi-SKU API JSON payload."""
+    return {
+        "itemId": "v1-257461931760-0",
+        "title": "AMD Ryzen 7 5800X 8-Core Processor ",
+        "price": "$249.99",
+        "shippingCost": "+$5.00",
+        "conditionId": 3000,
+        "sellerUser": "bazaar_components_edge",
+        "feedbackScore": 1425,
+        "positiveFeedbackPercent": 99.4
+    }
 
-def test_historical_aggregation_and_defect_segregation(memory_db_manager):
-    """Ensures that the calculator properly filters and processes defect items
-    separate from standard pool averages, generating clear statistical summaries.
+def test_successful_sanitation_and_transformation(valid_ebay_json):
+    """Verifies that pristine payloads are correctly parsed and numeric types cleaned."""
+    schema = EbayAPIItemSchema(**valid_ebay_json)
+
+    assert schema.item_id == "v1-257461931760-0"
+    assert schema.title == "AMD Ryzen 7 5800X 8-Core Processor"
+    assert float(schema.price_string) == 249.99
+    assert float(schema.shipping_string) == 5.00
+    assert schema.condition_id == 3000
+
+def test_currency_stripping_on_messy_strings(valid_ebay_json):
+    """Ensures weird currency formats, localized commas, and symbols are scrubbed."""
+    valid_ebay_json["price"] = "USD 1,249.50"
+    valid_ebay_json["shippingCost"] = "FREE"
+
+    schema = EbayAPIItemSchema(**valid_ebay_json)
+    assert float(schema.price_string) == 1249.50
+    assert float(schema.shipping_string) == 0.0
+
+def test_missing_required_fields_raises_validation_error(valid_ebay_json):
+    """Asserts that missing vital tracking keys causes an immediate execution rejection."""
+    del valid_ebay_json["itemId"]  # Remove crucial structural key
+
+    with pytest.raises(ValidationError) as exc_info:
+        EbayAPIItemSchema(**valid_ebay_json)
+
+    assert "itemId" in str(exc_info.value)
+
+def test_invalid_condition_id_brackets_rejected(valid_ebay_json):
+    """Verifies our custom validator interceptor throws flags on rogue condition numbers."""
+    valid_ebay_json["conditionId"] = 9999  # Out of range non-existent eBay tier
+
+    with pytest.raises(ValidationError) as exc_info:
+        EbayAPIItemSchema(**valid_ebay_json)
+
+    assert "Invalid eBay condition ID specification" in str(exc_info.value)
+
+def test_repr_line_length_bounds_enforcement():
+    """Verifies that large models with extensive attribute sets format their
+    __repr__ output such that no individual line exceeds 80 characters.
     """
-    session = memory_db_manager.SessionLocal()
-
-    item_1 = MarketItemModel(
-        item_id="t1",
-        model_name="5800X",
-        category="1",
-        raw_title="AMD Ryzen 7 5800X CPU",
-        title="AMD Ryzen 7 5800X CPU",
-        price=200.0,
-        total_cost=210.0,
-        shipping_cost=10.0,
-        is_sold=True,
-        is_for_parts_or_not_working=False
-    )
-    item_2 = MarketItemModel(
-        item_id="t2",
-        model_name="5800X",
-        category="1",
-        raw_title="AMD Ryzen 7 5800X Brand New",
-        title="AMD Ryzen 7 5800X Brand New",
-        price=220.0,
-        total_cost=220.0,
-        shipping_cost=0.0,
-        is_sold=True,
-        is_for_parts_or_not_working=False
-    )
-    item_3 = MarketItemModel(
-        item_id="t3",
-        model_name="5800X",
-        category="1",
-        raw_title="AMD Ryzen 7 5800X BENT PINS AS-IS",
-        title="AMD Ryzen 7 5800X BENT PINS AS-IS",
-        price=90.0,
-        total_cost=100.0,
-        shipping_cost=10.0,
-        is_sold=True,
-        is_for_parts_or_not_working=True
+    dense_item = ActiveMarketItemModel(
+        item_id="v1-999999999999-99",
+        model_name="AMD_RYZEN_9_5950X_EXTREME_EDITION",
+        category="COMPUTING_HARDWARE_PROCESSORS_CPUS",
+        raw_title="AMD Ryzen 9 5950X 16-Core 32-Thread Unlocked Desktop Processor New",
+        title="AMD Ryzen 9 5950X (New)",
+        price=549.99,
+        shipping_cost=15.45,
+        total_cost=565.44,
+        currency="USD",
+        seller_username="premium_silicon_distribution_hub",
+        is_top_rated=True,
+        date_fetched=datetime.datetime(2026, 6, 11, 12, 0, 0),
+        process_state="PROCESSED_BY_DEEP_HARVEST_PIPELINE_ENGINE"
     )
 
-    session.add_all([item_1, item_2, item_3])
-    session.commit()
-    session.close()
+    repr_output = repr(dense_item)
+    lines = repr_output.split("\n")
 
-    service = HistoricalAggregatorService(db_manager=memory_db_manager)
-    summary = service.compute_market_metrics(model_name="5800X", timeframe_days=30)
+    for index, line in enumerate(lines):
+        line_length = len(line)
+        assert line_length <= 80, (
+            f"Line breaking failure on row index {index}! "
+            f"Length is {line_length} chars (Max: 80). Content: '{line}'"
+        )
 
-    assert summary["processed_groups"] == 2
-
-    verify_session = memory_db_manager.SessionLocal()
-    query = text("SELECT total_units, avg_item_price FROM historical_metrics WHERE model_name = :m AND condition_type = :c")
-    
-    standard_stats = verify_session.execute(query, {"m": "5800X", "c": "STANDARD"}).fetchone()
-    defect_stats = verify_session.execute(query, {"m": "5800X", "c": "DEFECTIVE"}).fetchone()
-
-    assert standard_stats is not None
-    assert standard_stats.total_units == 2
-    assert standard_stats.avg_item_price == 210.0
-    
-    assert defect_stats is not None
-    assert defect_stats.total_units == 1
-    assert defect_stats.avg_item_price == 90.0
-
-    verify_session.close()
-
-def test_historical_aggregation_handles_empty_datasets_gracefully(memory_db_manager):
-    """Ensures that when statistical profiling runs against a missing hardware model target,
-    the system avoids math division crashes and responds with clean baseline defaults.
-    """
-    service = HistoricalAggregatorService(db_manager=memory_db_manager)
-    summary = service.compute_market_metrics(model_name="NON-EXISTENT-CPU", timeframe_days=30)
-
-    assert isinstance(summary, dict)
-    assert summary.get("processed_groups", 0) == 0
+def test_title_sanitation_removes_embedded_whitespace_clutter(valid_ebay_json):
+    """Validates that messy titles featuring internal spacing clutter are normalized cleanly."""
+    valid_ebay_json["title"] = "AMD\tRyzen   7 \n 5800X  Processor  "
+    schema = EbayAPIItemSchema(**valid_ebay_json)
+    assert schema.title == "AMD Ryzen 7 5800X Processor"

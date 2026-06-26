@@ -1,9 +1,18 @@
+# src/analysis/aggregator.py
+
+"""
+Bazaar Historical Data Aggregator Service
+
+This module calculates moving statistical metrics (central tendencies, pricing boundaries, 
+and shipping averages) from historical transactional data stores and updates the analytical 
+aggregation matrix table.
+"""
+
 import logging
 from statistics import mean, median, mode, StatisticsError
-from datetime import datetime
 from sqlalchemy.orm import Session
-from sqlalchemy import text # Added to run direct raw sql queries safely
-from src.database.models import MarketItemModel
+from sqlalchemy import text 
+from src.database.models import HistoricalMarketItemModel
 
 logger = logging.getLogger("BazaarPipeline")
 
@@ -12,15 +21,15 @@ class HistoricalAggregatorService:
         self.db_manager = db_manager
 
     def compute_market_metrics(self, model_name: str, timeframe_days: int = 30) -> dict:
-        """Queries database items, segregates standard vs. defect items,
+        """Queries historical database items, segregates standard vs. defect items,
         and updates the summary metrics compilation matrix.
         """
         session: Session = self.db_manager.SessionLocal()
         try:
-            # 1. Pull relevant items using indexed filter criteria
-            query = session.query(MarketItemModel).filter(
-                MarketItemModel.model_name == model_name,
-                MarketItemModel.is_sold == True
+            # 1. Pull relevant items using indexed filter criteria on the historical model
+            query = session.query(HistoricalMarketItemModel).filter(
+                HistoricalMarketItemModel.model_name == model_name,
+                HistoricalMarketItemModel.is_sold == True
             )
 
             all_items = query.all()
@@ -48,23 +57,7 @@ class HistoricalAggregatorService:
                 prices = [item.price for item in current_pool]
                 shippings = [item.shipping_cost for item in current_pool if item.shipping_cost is not None]
 
-                # Compute Central Tendencies
-                try:
-                    calculated_mode = mode(prices)
-                except StatisticsError:
-                    calculated_mode = prices[0]  # Fallback if no clean frequency dominant value exists
-
-                # 4. Unit Velocity Tracker: Calculate mean days on market (DoM)
-                dom_deltas = []
-                for item in current_pool:
-                    if item.item_start_date and item.date_fetched:
-                        # Fallback calculation matching database timestamp profiles
-                        delta = (item.date_fetched - item.item_start_date).days
-                        dom_deltas.append(max(0, delta))
-
-                mean_dom = mean(dom_deltas) if dom_deltas else 0.0
-
-                # 5. Core SQL Execution: Replaces the missing HistoricalMetricModel declarative class
+                # 4. Core SQL Execution targeting historical indices
                 upsert_query = text("""
                     INSERT INTO historical_metrics (
                         model_name, timeframe, condition_type, total_units,

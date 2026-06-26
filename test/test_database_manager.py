@@ -1,12 +1,17 @@
 # test/test_database_manager.py
+"""
+Bazaar Database Manager Unit Test Suite
 
-# tests/test_database_manager.py
+This module provides structural integrity validation and boundary condition tests 
+for the DatabaseManager persistence layer. It executes isolated, transactional 
+in-memory SQLite test fixtures to verify table construction and upsert capabilities.
+"""
 
 import pytest
 from unittest.mock import MagicMock
 from src.core.models import MarketItem
 from src.database.db_manager import DatabaseManager
-from src.database.models import MarketItemModel
+from src.database.models import ActiveMarketItemModel
 
 @pytest.fixture
 def mock_config():
@@ -52,7 +57,7 @@ def test_database_initialization(db_manager):
     inspector = inspect(db_manager.engine)
     tables = inspector.get_table_names()
 
-    assert "market_items" in tables
+    assert "active_market_items" in tables
     assert "historical_metrics" in tables
 
 def test_insert_harvested_item_success(db_manager, sample_market_item):
@@ -60,7 +65,7 @@ def test_insert_harvested_item_success(db_manager, sample_market_item):
     db_manager.insert_harvested_item(sample_market_item)
 
     session = db_manager.SessionLocal()
-    db_record = session.query(MarketItemModel).filter_by(item_id="123456789012").first()
+    db_record = session.query(ActiveMarketItemModel).filter_by(item_id="123456789012").first()
     session.close()
 
     assert db_record is not None
@@ -80,7 +85,7 @@ def test_insert_harvested_item_upsert_behavior(db_manager, sample_market_item):
     db_manager.insert_harvested_item(sample_market_item)
 
     session = db_manager.SessionLocal()
-    records = session.query(MarketItemModel).filter_by(item_id="123456789012").all()
+    records = session.query(ActiveMarketItemModel).filter_by(item_id="123456789012").all()
     session.close()
 
     assert len(records) == 1  # No duplicates created

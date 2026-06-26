@@ -1,4 +1,12 @@
 # src/database/db_manager.py
+"""
+Bazaar Database Connection and Ingestion Manager
+
+This module manages the core SQLite engine lifecycle, session instantiations, 
+and atomic insertion/upsert pipelines. It provides data type serialization patches 
+and native SQLite dialetical conflict handling (INSERT OR IGNORE / UPSERT) 
+for incoming live market listing feeds.
+"""
 
 import os
 import json
@@ -6,7 +14,7 @@ import datetime
 from typing import Set
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from src.database.models import Base, MarketItemModel
+from src.database.models import Base, ActiveMarketItemModel, HistoricalMarketItemModel
 from loguru import logger
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -37,12 +45,12 @@ class DatabaseManager:
         Base.metadata.create_all(bind=self.engine)
 
     def get_existing_item_ids(self, item_ids: list) -> Set[str]:
-        """Queries the database for a specific subset of IDs to verify existence."""
+        """Queries the active database table for a specific subset of IDs to verify existence."""
         session = self.SessionLocal()
         try:
-            # Efficiently check only the IDs provided in the list
-            results = session.query(MarketItemModel.item_id).filter(
-                MarketItemModel.item_id.in_(item_ids)
+            # Efficiently check only the IDs provided against the active items pool
+            results = session.query(ActiveMarketItemModel.item_id).filter(
+                ActiveMarketItemModel.item_id.in_(item_ids)
             ).all()
             return {str(row[0]) for row in results}
         except Exception as e:
@@ -53,7 +61,7 @@ class DatabaseManager:
 
     def commit_market_items(self, db_conn_unused, final_records: list, overwrite_on_conflict: bool = False) -> int:
         """
-        Processes a batch list of MarketItem objects.
+        Processes a batch list of MarketItem objects into the active listings pool.
         - Default: Inserts new records, ignoring duplicate conflicts (INSERT OR IGNORE).
         - Optional: Updates existing records if overwrite_on_conflict=True (UPSERT).
         """
@@ -62,14 +70,14 @@ class DatabaseManager:
 
         session = self.SessionLocal()
         new_inserts_count = 0
-        model_columns = MarketItemModel.__table__.columns.keys()
+        model_columns = ActiveMarketItemModel.__table__.columns.keys()
 
         try:
-            # 1. Pull existing IDs in this batch to verify what is truly new vs an ignore/update
+            # 1. Pull existing active IDs in this batch to verify what is truly new vs an ignore/update
             batch_ids = [str(item.item_id) for item in final_records]
             existing_ids = set(
-                r[0] for r in session.query(MarketItemModel.item_id)
-                .filter(MarketItemModel.item_id.in_(batch_ids))
+                r[0] for r in session.query(ActiveMarketItemModel.item_id)
+                .filter(ActiveMarketItemModel.item_id.in_(batch_ids))
                 .all()
             )
 
@@ -98,11 +106,11 @@ class DatabaseManager:
                         else:
                             item_data[col_name] = val
 
-                stmt = sqlite_insert(MarketItemModel).values(**item_data)
+                stmt = sqlite_insert(ActiveMarketItemModel).values(**item_data)
 
                 # 3. Handle conflict strategies cleanly depending on the runtime context
                 if overwrite_on_conflict:
-                    # Enforce strict UPSERT behavior for your scalar states/test requirements
+                    # Enforce strict UPSERT behavior for your active listing status/test updates
                     stmt = stmt.on_conflict_do_update(
                         index_elements=['item_id'],
                         set_={
@@ -112,7 +120,7 @@ class DatabaseManager:
                         }
                     )
                 else:
-                    # Enforce high-speed strict INSERT OR IGNORE for historical scraping sweeps
+                    # Enforce high-speed strict INSERT OR IGNORE for active monitoring sweeps
                     stmt = stmt.on_conflict_do_nothing(index_elements=['item_id'])
 
                 session.execute(stmt)

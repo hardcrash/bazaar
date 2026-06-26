@@ -1,41 +1,32 @@
-# Bazaar Development Roadmap
+Bazaar Development Roadmap
+🚀 High-Priority: Active Listings & Resilience
 
-## TODO: Refine Stage 2 MSKU Parsing & Outlier Filtering
+    [ ] Migrate Selection Logic: Move EBAY_SELECTORS_MATRIX from the client class into a standalone config/selectors.yaml file for decoupled maintenance.
 
-* **Fix Heuristic Bleed on Hardware Defect Flags:** The current `has_bent_pins` check executes a page-wide string scan on the raw HTML. If a multi-sku listing contains a single broken unit or boilerplate defect text in the terms, all extracted variations are falsely marked as `Pins: True`.
-* **Solution:** Scope the regex/keyword heuristics tightly to the specific variation text block or individual item condition description container instead of the global `html_content`.
+    [ ] Refactor Extraction Methods: Update _extract_title, _extract_price, etc., in ebay_scrape_client.py to iterate through the new selector matrix dynamically rather than using hard-coded lookups.
 
+    [ ] Active Listing Pipeline: Pivot development to the Active Listings module using the official eBay API (Trading/Finding APIs) to preserve scraper credits.
 
-* **Handle MSKU Initial Target Discrepancy:** Multi-variation listings are slipping through Stage 1 bracket bounds because the parent card advertised the lowest variant's price (e.g., a 3700X for $99.90). Once Stage 2 unmasks the true target variant cost (e.g., the 5800X at $202.50), it violates the active historical slicing filter ($115–$120).
-* **Solution:** Ensure the database/analysis pipeline explicitly drops or routes unmasked items that fall outside the active price bracket to prevent statistical skewing in the analytics window.
+    [ ] Resilience Audit: Perform a file-by-file review of existing modules to improve error handling and expand unit test coverage (targeting 90%+ path coverage).
 
+📊 Data Infrastructure & Analytics
 
+    [ ] Database Refinement: Cleanup the historical_market_items table (prune duplicates, normalize schema, enforce constraints).
 
----
+    [ ] Local Metrics Troubleshooting: Develop a "Offline Analysis" routine to compute historical_metrics directly from current bazaar.db entries without triggering outbound API/scraper calls.
 
-## Data Infrastructure Roadmap
+    [ ] Class Architecture Review: Identify and refactor "oddball" classes to improve inheritance and reduce complexity (e.g., merging redundant provider classes).
 
-### Phase 1: Foundation & Persistence
+🖥️ Future Roadmap
 
+    [ ] Phase 1: Foundation & Persistence: Implement DatabaseManager with session-based, persistent connection handling and UPSERT logic.
 
-* [ ] **Implement `DatabaseManager`:** Create a robust session-based manager ensuring connection persistence and `INSERT OR REPLACE` logic for active data.
+    [ ] Phase 2: Data Consolidation: Finalize the Historical Aggregator Service (calculating Benchmarks, Defect Segregation, and Velocity).
 
-### Phase 2: Ingestion Engine
+    [ ] Phase 3: Front-End: Develop PySide6 dashboard interface for real-time visualization of market velocity and price benchmarks.
 
-* [ ] **Implement `eBayApiClient`:** Develop the official API interface using OAuth2 credentials to replace current scraping logic.
-* [ ] **Data Validation Layer:** Implement `Pydantic` models to validate and sanitize incoming eBay JSON before it is committed to the database.
+Technical Note: DOM & API Strategy
 
-### Phase 3: Data Consolidation & Analytics
+To avoid further credit depletion, prioritize the API approach for active data. When returning to the scraping pipeline for historical gaps, ensure the fallback logic in _parse_ebay_html is fully implemented to leverage the new s-card grid structure identified in our diagnostic audit.
 
-* [ ] **Historical Harvester Implementation: Refine src/pipeline/historical_harvester.py to utilize ebay_scrape_client.py for backfilling data, ensuring the results are mapped to the standard MarketItem model before database insertion.
-
-* [ ] **Historical Aggregator Service: Develop the consolidation logic that queries the analyzed_market_items table to compute:
-  
-  Price Benchmarks: Calculate Mean, Median, and Mode for pricing across defined categories.
-  
-  Defect Segregation: Count and group units marked is_for_parts_or_not_working vs. used / refurbished to establish "risk-adjusted" market value.
-
-* [ ] **Unit Velocity Tracker: Implement the calculation logic for "Days on Market" (DoM) utilizing item_start_date and date_fetched to identify stagnant vs. high-velocity inventory.
-
-
----
+Would you like to start by isolating the EBAY_SELECTORS_MATRIX into the YAML config file, or should we begin the class relationship audit first to simplify the structure before refactoring the extraction methods?
