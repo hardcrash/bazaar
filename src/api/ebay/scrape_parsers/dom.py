@@ -129,3 +129,11 @@ def harvest_raw_title_text(item: Tag, title_selectors: List[str]) -> Optional[st
             raw_text = img_node.get('alt')
             
     return raw_text
+
+def extract_by_selector(item: Tag, selectors: List[str]) -> Optional[Tag]:
+    """Generic helper to locate an element based on a prioritized list of selectors."""
+    for selector in selectors:
+        match = item.select_one(selector)
+        if match:
+            return match
+    return None

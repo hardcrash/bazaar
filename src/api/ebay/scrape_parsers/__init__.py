@@ -7,7 +7,13 @@ from src.api.ebay.scrape_parsers.dom import (
     is_valid_listing,
     harvest_fallback_links,
     harvest_raw_title_text,
-    harvest_item_identifiers 
+    harvest_item_identifiers,
+    extract_by_selector 
 )
 
 from src.api.ebay.scrape_parsers.metrics import sanitize_title_noise
+
+from src.api.ebay.scrape_parsers.msku import (
+    extract_msku_metadata,
+    parse_msku_json
+)

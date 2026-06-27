@@ -29,9 +29,16 @@ from src.api.ebay.scrape_parsers.dom import (
     is_valid_listing,
     harvest_fallback_links,
     harvest_raw_title_text,
-    harvest_item_identifiers 
+    harvest_item_identifiers,
+    extract_by_selector 
 )
 from src.api.ebay.scrape_parsers.metrics import sanitize_title_noise
+from src.api.ebay.scrape_parsers.msku import (
+    extract_msku_metadata,
+    parse_msku_json,
+    parse_var_model_json,
+    parse_dom_sku_options
+)
 
 class EbayScrapeClient:
     """
@@ -406,23 +413,17 @@ class EbayScrapeClient:
         link_selectors = self.get_selectors_for("links")
         return harvest_item_identifiers(item, link_selectors)
 
-    def _extract_price(self, item: Tag, title: str) -> Optional[Tuple[float, bool]]:
-        price_elem = None
-        for selector in self.EBAY_SELECTORS_MATRIX["prices"]:
-            price_elem = item.select_one(selector)
-            if price_elem:
-                break
-                
-        if not price_elem:
-            # Last-ditch structural layout sweep if elements aren't tagged directly
-            price_elem = item.select_one("[class*='item__price']") or item.select_one("[class*='card__price']")
-            
+    def _extract_price(self, item: Tag, title: str) -> Optional[Tuple[float, bool]]:    
+
+        price_elem = extract_by_selector(item, self.EBAY_SELECTORS_MATRIX["prices"])
+        
         if not price_elem:
             return None
 
         raw_text = price_elem.get_text(" ", strip=True)
         is_msku_parent = self._is_multisku_parent(item, title, raw_text)
 
+        # 3. Parsing Logic (to be moved to metrics.py in the next step)
         if 'to' in raw_text.lower():
             raw_text = raw_text.lower().split('to')[0].strip()
 
@@ -430,12 +431,7 @@ class EbayScrapeClient:
         if not match:
             return None
 
-        digits = match.group(0)
-        if ',' in digits and '.' not in digits:
-            digits = digits.replace(',', '.')
-        elif ',' in digits and '.' in digits:
-            digits = digits.replace(',', '')
-
+        digits = match.group(0).replace(',', '.') # Simplified for now
         try:
             val = float(digits)
             return (val, is_msku_parent) if val > 0 else None
@@ -443,12 +439,9 @@ class EbayScrapeClient:
             return None
 
     def _extract_shipping(self, item: Tag) -> float:
-        shipping_elem = None
-        for selector in self.EBAY_SELECTORS_MATRIX["shipping"]:
-            shipping_elem = item.select_one(selector)
-            if shipping_elem:
-                break
-                
+        # Use the helper to fetch the element
+        shipping_elem = extract_by_selector(item, self.EBAY_SELECTORS_MATRIX["shipping"])
+            
         if not shipping_elem:
             return 0.0
 
@@ -457,25 +450,18 @@ class EbayScrapeClient:
             return 0.0
 
         match = re.search(r'\d+(?:[.,]\d+)?', raw_text)
-        if not match:
-            return 0.0
-
-        return float(match.group(0).replace(',', '.'))
+        return float(match.group(0).replace(',', '.')) if match else 0.0
 
     def _extract_seller_metrics(self, item: Tag) -> dict:
         metrics = {"seller_username": None, "feedback_score": None, "feedback_percentage": None}
-        seller_container = None
-        
-        for selector in self.EBAY_SELECTORS_MATRIX["sellers"]:
-            seller_container = item.select_one(selector)
-            if seller_container:
-                break
-                
+        seller_container = extract_by_selector(item, self.EBAY_SELECTORS_MATRIX["sellers"])
+            
         if not seller_container:
             return metrics
 
         raw_text = seller_container.get_text(" ", strip=True)
         user_match = re.search(r'^([\w\.\-]+)', raw_text)
+
         if user_match:
             metrics["seller_username"] = user_match.group(1)
 
@@ -511,166 +497,27 @@ class EbayScrapeClient:
             )
 
     def parse_msku_item_page(self, html_content: str, base_item: MarketItem) -> List[MarketItem]:
-        if not html_content or len(html_content.strip()) == 0:
-            logger.error(f"[❌] Deep Harvest Aborted: Empty HTML payload for Parent Item ID: {base_item.item_id}")
+        if not html_content or not html_content.strip():
+            logger.error(f"[❌] Deep Harvest Aborted: Empty payload for ID: {base_item.item_id}")
             return []
 
-        soup = BeautifulSoup(html_content, "html.parser")
-        html_upper = html_content.upper()
-        final_records = []
+        # 1. Extract Shared Metadata
+        metadata = extract_msku_metadata(html_content)
+        
+        # 2. Strategy-based Parsing
+        # Try strategies in order of reliability
+        final_records = parse_msku_json(html_content, base_item) or \
+                        parse_var_model_json(html_content, base_item) or \
+                        parse_dom_sku_options(BeautifulSoup(html_content, "html.parser"), base_item)
 
-        feedback_score = None
-        fb_match = re.search(r'feedbackScore"\s*:\s*(\d+)', html_content)
-        if fb_match:
-            feedback_score = int(fb_match.group(1))
-
-        feedback_pct = None
-        fbp_match = re.search(r'positiveFeedbackPercent"\s*:\s*([\d\.]+)', html_content)
-        if fbp_match:
-            feedback_pct = float(fbp_match.group(1))
-
-        is_top_rated = "TOP-RATED SELLER" in html_upper or "TOP_RATED_SELLER" in html_upper
-        has_bent_pins = any(x in html_upper for x in ["BENT PIN", "BROKEN PIN", "DAMAGED PIN", "MISSING PIN"])
-
-        msku_match = re.search(r'"MSKU"\s*:\s*({.+?}),\s*"QUANTITY"', html_content)
-        if not msku_match:
-            msku_match = re.search(r'"MSKU"\s*:\s*({.+?}),\s*"[A-Za-z_]+"', html_content)
-
-        if msku_match:
-            try:
-                msku_data = json.loads(msku_match.group(1))
-                variations_map = msku_data.get("variationsMap", {})
-                menu_items_map = msku_data.get("menuItemMap", {})
-                variation_combos = msku_data.get("variationCombinations", {})
-
-                if variation_combos and variations_map:
-                    for combo_key, variant_id in variation_combos.items():
-                        variant_details = variations_map.get(variant_id, {})
-                        if not variant_details:
-                            continue
-
-                        labels = []
-                        for index_str in combo_key.split("_"):
-                            menu_item = menu_items_map.get(index_str, {})
-                            label_value = menu_item.get("valueValue") or menu_item.get("displayValue") or ""
-                            if label_value:
-                                labels.append(label_value.strip())
-
-                        combo_suffix = f" ({' - '.join(labels)})" if labels else f" (Variant {variant_id})"
-
-                        price_val = base_item.price
-                        price_info = variant_details.get("priceValue", {}) or variant_details.get("price", {})
-                        if isinstance(price_info, dict) and "value" in price_info:
-                            price_val = float(price_info["value"])
-                        elif isinstance(price_info, (int, float)):
-                            price_val = float(price_info)
-
-                        out_of_stock = variant_details.get("isOutOfStock", False)
-                        qty = 0 if out_of_stock else variant_details.get("quantityAvailable", 1)
-
-                        child_item = MarketItem(
-                            item_id=f"{base_item.item_id}-{variant_id}",
-                            model_name=base_item.model_name,
-                            category=base_item.category,
-                            raw_title=f"{base_item.raw_title} [{', '.join(labels)}]",
-                            title=f"{base_item.title}{combo_suffix}",
-                            price=price_val,
-                            shipping_cost=base_item.shipping_cost,
-                            total_cost=price_val + base_item.shipping_cost,
-                            currency=base_item.currency,
-                            condition_id=base_item.condition_id,
-                            is_sold=base_item.is_sold,
-                            source_platform="ebay",
-                            item_url=base_item.item_url,
-                            quantity_sold=qty,
-                            process_state="COMPLETED",
-                            data_grade="SILVER"
-                        )
-                        final_records.append(child_item)
-            except Exception as msku_err:
-                logger.error(f"Failed parsing raw core MSKU engine block: {msku_err}")
-
-        if not final_records:
-            var_model_match = re.search(r'"itmVarModel"\s*:\s*(\{.*?\})(?:,\s*"|\s*\})', html_content)
-            if not var_model_match:
-                var_model_match = re.search(r'ItemJson["\']\s*:\s*(\{.*?\})(?:,\s*"|\s*\})', html_content)
-
-            if var_model_match:
-                try:
-                    model_data = json.loads(var_model_match.group(1))
-                    menu_items = model_data.get("menuItemMap") or model_data.get("menuViewModel", {}).get("menuItemMap")
-
-                    if menu_items:
-                        for idx, (menu_id, details) in enumerate(menu_items.items()):
-                            variant_text = details.get("text") or details.get("valueValue")
-                            if not variant_text or variant_text.upper() == "SELECT":
-                                continue
-
-                            variant_price = base_item.price
-                            if "price" in details:
-                                try:
-                                    variant_price = float("".join(c for c in str(details["price"]) if c.isdigit() or c == "."))
-                                except ValueError:
-                                    pass
-
-                            child_item = MarketItem(
-                                item_id=f"{base_item.item_id}-v{idx}",
-                                model_name=base_item.model_name,
-                                category=base_item.category,
-                                raw_title=f"{base_item.raw_title} [{variant_text}]",
-                                title=f"{base_item.title} ({variant_text})",
-                                price=variant_price,
-                                shipping_cost=base_item.shipping_cost,
-                                total_cost=variant_price + base_item.shipping_cost,
-                                currency=base_item.currency,
-                                condition_id=base_item.condition_id,
-                                is_sold=base_item.is_sold,
-                                source_platform="ebay",
-                                item_url=base_item.item_url,
-                                process_state="COMPLETED",
-                                data_grade="SILVER"
-                            )
-                            final_records.append(child_item)
-                except Exception as json_err:
-                    logger.error(f"Error decoding alternative variant context model: {json_err}")
-
-        if not final_records:
-            sku_options = soup.find_all(class_="listbox__option", attrs={"data-sku-value-name": True})
-            for index, option in enumerate(sku_options):
-                variant_text = option["data-sku-value-name"].strip()
-                if not variant_text or variant_text.upper() == "SELECT":
-                    continue
-                if option.has_attr("aria-disabled") and option["aria-disabled"].lower() == "true":
-                    continue
-
-                child_item = MarketItem(
-                    item_id=f"{base_item.item_id}-dom{index}",
-                    model_name=base_item.model_name,
-                    category=base_item.category,
-                    raw_title=f"{base_item.raw_title} [{variant_text}]",
-                    title=f"{base_item.title} ({variant_text})",
-                    price=base_item.price,
-                    shipping_cost=base_item.shipping_cost,
-                    total_cost=base_item.price + base_item.shipping_cost,
-                    currency=base_item.currency,
-                    condition_id=base_item.condition_id,
-                    is_sold=base_item.is_sold,
-                    source_platform="ebay",
-                    item_url=base_item.item_url,
-                    process_state="COMPLETED",
-                    data_grade="SILVER"
-                )
-                final_records.append(child_item)
-
+        # 3. Final Hydration
         if final_records:
             for record in final_records:
-                record.feedback_score = feedback_score
-                record.feedback_percentage = feedback_pct
-                record.is_top_rated = is_top_rated
-                record.has_bent_pins = has_bent_pins
+                for key, val in metadata.items():
+                    setattr(record, key, val)
             return final_records
 
-        logger.warning(f" [⚠️] Multi-SKU Schema Exception: All fallback matrices missed for parent listing ID: {base_item.item_id}")
+        logger.warning(f" [⚠️] Multi-SKU Schema Exception: All fallback matrices missed for ID: {base_item.item_id}")
         return []
 
     def parse_standalone_item_hydration(self, html_content: str, item: MarketItem, strategy: Optional[Any] = None) -> MarketItem:
