@@ -26,15 +26,23 @@ def extract_msku_metadata(html_content: str) -> dict:
         "has_bent_pins": any(x in html_upper for x in ["BENT PIN", "BROKEN PIN", "DAMAGED PIN", "MISSING PIN"])
     }
 
+import json
+import re
+
 def parse_msku_json(html_content: str, base_item: MarketItem) -> List[MarketItem]:
-    """Parses the primary MSKU JSON engine."""
-    msku_match = re.search(r'"MSKU"\s*:\s*({.+?}),\s*"(?:QUANTITY|[A-Za-z_]+)"', html_content)
-    if not msku_match: 
+    """Parses the primary MSKU JSON engine using raw_decode for nested support."""
+    # Find the starting point of the JSON object
+    start_match = re.search(r'"MSKU"\s*:\s*\{', html_content)
+    if not start_match:
         return []
-    
-    records = []
+
     try:
-        data = json.loads(msku_match.group(1))
+        # Slice the string to start exactly at the opening brace
+        json_str = html_content[start_match.end() - 1:]
+        # raw_decode parses the first complete JSON object and ignores the rest
+        data, _ = json.JSONDecoder().raw_decode(json_str)
+        
+        records = []
         v_map = data.get("variationsMap", {})
         menu_map = data.get("menuItemMap", {})
         combos = data.get("variationCombinations", {})
@@ -43,16 +51,31 @@ def parse_msku_json(html_content: str, base_item: MarketItem) -> List[MarketItem
             details = v_map.get(variant_id, {})
             if not details: continue
             
-            labels = [menu_map.get(idx, {}).get("valueValue") or menu_map.get(idx, {}).get("displayValue", "") for idx in combo_key.split("_")]
-            labels = [l.strip() for l in labels if l]
+            labels = []
+            for idx in combo_key.split("_"):
+                item = menu_map.get(idx, {})
+                label = item.get("valueValue") or item.get("displayValue")
+                if label: labels.append(label.strip())
             
             price_info = details.get("priceValue") or details.get("price", {})
-            price = float(price_info.get("value") if isinstance(price_info, dict) else price_info)
+            try:
+                price = float(price_info.get("value") if isinstance(price_info, dict) else price_info)
+            except (ValueError, TypeError, AttributeError):
+                price = base_item.price
             
-            records.append(_build_child_item(base_item, f"-{variant_id}", f" ({' - '.join(labels)})" if labels else f" (Variant {variant_id})", labels, price, details.get("isOutOfStock", False)))
-    except Exception as e:
-        logger.error(f"MSKU engine block failed: {e}")
-    return records
+            records.append(_build_child_item(
+                base_item, 
+                f"-{variant_id}", 
+                f" ({' - '.join(labels)})" if labels else f" (Variant {variant_id})", 
+                labels, 
+                price, 
+                details.get("isOutOfStock", False)
+            ))
+        return records
+
+    except (json.JSONDecodeError, ValueError, AttributeError) as e:
+        logger.error(f"MSKU JSON parsing failed: {e}")
+        return []
 
 def _build_child_item(base: MarketItem, id_suffix: str, title_suffix: str, labels: List[str], price: float, out_of_stock: bool) -> MarketItem:
     """Helper to maintain consistency in MarketItem construction."""
@@ -77,9 +100,9 @@ def _build_child_item(base: MarketItem, id_suffix: str, title_suffix: str, label
 
 def parse_var_model_json(html_content: str, base_item: MarketItem) -> List[MarketItem]:
     """Handles the alternative itmVarModel/ItemJson variant extraction."""
-    var_model_match = re.search(r'"itmVarModel"\s*:\s*(\{.*?\})(?:,\s*"|\s*\})', html_content)
+    var_model_match = re.search(r'"itmVarModel"\s*:\s*(\{.+?\})(?:\s*,\s*|$)', html_content)
     if not var_model_match:
-        var_model_match = re.search(r'ItemJson["\']\s*:\s*(\{.*?\})(?:,\s*"|\s*\})', html_content)
+        var_model_match = re.search(r'"ItemJson"\s*:\s*(\{.+?\})(?:\s*,\s*|$)', html_content)
 
     if not var_model_match:
         return []
