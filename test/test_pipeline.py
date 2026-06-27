@@ -1,74 +1,87 @@
-# test/test_pipeline.py
 """
 Bazaar Integration Pipeline Unit Tests
 
-This module contains the integration and sanity test suite for the Bazaar core 
-ingestion mechanics. It validates that raw, unstructured JSON payloads correctly translate 
-into validated Pydantic models and successfully serialize into isolated runtime test databases.
+This module validates that raw HTML structures process cleanly through the active 
+EbayScrapeClient and successfully serialize into isolated runtime test databases.
 """
 
-import os
 import pytest
 from src.database.db_manager import DatabaseManager
-from src.analysis.transformer import MarketItemTransformer
+from src.api.ebay.ebay_scrape_client import EbayScrapeClient
 
 @pytest.fixture
 def isolated_db_manager(tmp_path):
     """
-    Creates an isolated, sandboxed database instance for the lifetime of the test execution,
-    guaranteeing production state data is never polluted by automated verification passes.
+    Creates an isolated, sandboxed database instance for testing.
     """
     test_db_file = tmp_path / "bazaar_test.db"
     config = {
         "database": {
-            "path": str(test_db_file)
+            "path": test_db_file
         }
     }
-    manager = DatabaseManager(config=config)
-    return manager
+    return DatabaseManager(config=config)
 
 def test_raw_payload_transformation_to_database_insertion(isolated_db_manager):
     """
-    Validates end-to-end processing of a mock API harvest variant payload:
-    1. Structural field alignment through translation matrix layers (camelCase to snake_case).
-    2. Model validation extraction matching data structure target properties.
-    3. Permanent database write verification to isolated local state tables.
+    Validates end-to-end processing using the active production HTML parsing path.
     """
-    # 🌟 Raw network payload variant representing an active payload response block
-    raw_api_payload = {
-        "itemId": "v1-998877665544-0",
-        "title": "   *** SALE *** AMD Ryzen 7 7800X3D Gaming Processor  ",
-        "price": {"value": "349.00", "currency": "USD"},
-        "shippingOptions": [{"shippingCost": {"value": "Free"}}],
-        "conditionId": "1000",  # Code 1000 maps to New
-        "seller": {
-            "username": "apex_silicon_distribution",
-            "feedbackScore": "15420",
-            "positiveFeedbackPercent": "99.4"
+    # 1. Pull the actual sandboxed database path directly out of the SQLAlchemy engine
+    test_db_path = isolated_db_manager.engine.url.database
+
+    mock_unified_config = {
+        "app_env": "testing",
+        "api_key": "fake_key",
+        "database": {
+            "path": test_db_path
         }
     }
+    
+    client = EbayScrapeClient(config=mock_unified_config)
 
-    # Execute conversion passing data through translation matrix properties
-    market_dataclass = MarketItemTransformer.raw_ebay_json_to_market_item(
-        item_json=raw_api_payload,
-        category="processors",
-        condition_id=1000,
+    # 2. Build a raw HTML string snippet simulating a simplified eBay listing structure
+    # (Using generic standard list-item structures to hit your selectors)
+    mock_html = """
+    <html>
+        <body>
+            <ul class="srp-results srp-list clearfix">
+                <li class="s-item s-item__pl-on-bottom">
+                    <div class="s-item__info clearfix">
+                        <a href="https://www.ebay.com/itm/12345" class="s-item__link">
+                            <span role="heading" aria-level="3" class="s-item__title">AMD Ryzen 7 7800X3D Gaming Processor</span>
+                        </a>
+                        <span class="s-item__price">$349.00</span>
+                        <span class="s-item__shipping s-item__logisticsCost">Free shipping</span>
+                        <span class="s-item__seller-info">
+                            <span class="s-item__seller-name">apex_silicon_distribution</span>
+                        </span>
+                    </div>
+                </li>
+            </ul>
+        </body>
+    </html>
+    """
+
+    # 3. Process the HTML via the production engine path
+    market_items = client._parse_ebay_html(
+        html_content=mock_html,
+        model_name="7800X3D",
+        category_id="processors",
         is_sold=True
     )
 
-    # Apply explicit string tracking tag for index normalization
-    market_dataclass.model_name = "7800X3D"
+    # Verify a listing was found and successfully hydrated into a MarketItem object
+    assert len(market_items) > 0, "❌ DOM Ingestion failed to parse any items out of mock HTML."
+    market_item = market_items[0]
 
-    # Assert model attributes are transformed correctly using snake_case properties
-    assert market_dataclass.item_id == "v1-998877665544-0"
-    assert "7800X3D" in market_dataclass.model_name
-
-    # Attempt direct entry insertion into sandboxed target engine tables
+    assert "7800X3D" in market_item.model_name
+    
+    # 4. Verify permanent database write serialization
     insertion_success = False
     try:
-        isolated_db_manager.insert_harvested_item(market_dataclass)
+        isolated_db_manager.insert_harvested_item(market_item)
         insertion_success = True
     except Exception as exc:
-        pytest.fail(f"❌ Database engine raised unexpected execution exception on entry insert: {exc}")
+        pytest.fail(f"❌ Database engine raised unexpected exception on insert: {exc}")
 
     assert insertion_success is True
