@@ -23,6 +23,8 @@ class ScraperApiProvider(BaseProxyProvider):
         into a unified outbound proxy parameter bundle targeting ScraperAPI endpoints.
         """
         api_key = self.provider_cfg.get("api_key", "").strip()
+        if not api_key:
+            raise ValueError("ScraperApiProvider missing required 'api_key' initialization configuration parameter.")
 
         base_url = (self.provider_cfg.get("base_url") or "http://api.scraperapi.com").strip().rstrip('/')
         endpoint_path = (self.provider_cfg.get("endpoint_path") or "").strip().strip('/')
@@ -32,18 +34,22 @@ class ScraperApiProvider(BaseProxyProvider):
         clean_target_url = unquote(target_url)
 
         # 1. Base Core Payload Parameters
+        # Fall back to 'country' if 'country_code' isn't explicitly defined
+        country = self.provider_cfg.get("country_code") or self.provider_cfg.get("country") or "us"
+        
         payload = {
             "api_key": api_key,
             "url": clean_target_url,
             "premium": "true",
             "skip_cache": "true",
-            "keep_headers": "false",  # Let ScraperAPI optimize header fingerprint generation
-            "country_code": self.provider_cfg.get("country_code", "us")
+            "keep_headers": "false",  
+            "country_code": country.strip().lower()
         }
 
-        # 2. Add Session Stickiness if provided in config
-        if self.provider_cfg.get("session_id"):
-            payload["session_number"] = str(self.provider_cfg.get("session_id"))
+        # 2. Add Session Stickiness (checking both session_number and session_id keys)
+        session_val = self.provider_cfg.get("session_number") or self.provider_cfg.get("session_id")
+        if session_val:
+            payload["session_number"] = str(session_val).strip()        
 
         # 3. Strip manual headers to prevent proxy fingerprint mismatches
         active_headers = {} 
