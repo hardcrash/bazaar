@@ -85,3 +85,45 @@ def test_raw_payload_transformation_to_database_insertion(isolated_db_manager):
         pytest.fail(f"❌ Database engine raised unexpected exception on insert: {exc}")
 
     assert insertion_success is True
+
+def test_parse_ebay_html_empty_dom(isolated_db_manager):
+    """Ensures an empty or unmatchable DOM returns an empty list gracefully."""
+    mock_config = {"app_env": "testing", "api_key": "fake", "database": {"path": isolated_db_manager.engine.url.database}}
+    client = EbayScrapeClient(config=mock_config)
+    
+    # Missing completely or empty body text
+    results = client._parse_ebay_html("<html><body></body></html>", "7800X3D", "processors")
+    assert results == []
+
+def test_parse_ebay_html_skips_invalid_items(isolated_db_manager):
+    """Ensures items missing crucial fields (price, identifiers) are skipped safely."""
+    mock_config = {"app_env": "testing", "api_key": "fake", "database": {"path": isolated_db_manager.engine.url.database}}
+    client = EbayScrapeClient(config=mock_config)
+
+    # HTML containing one listing missing a price, and one listing missing an item link/ID
+    malformed_html = """
+    <html>
+        <body>
+            <ul class="srp-results">
+                <!-- Item 1: Missing Price -->
+                <li class="s-item">
+                    <a href="https://www.ebay.com/itm/111" class="s-item__link">
+                        <span class="s-item__title">AMD Ryzen 7 7800X3D</span>
+                    </a>
+                    <!-- Price class missing entirely -->
+                </li>
+                <!-- Item 2: Missing Identifiers -->
+                <li class="s-item">
+                    <!-- Link missing entirely -->
+                    <span class="s-item__title">AMD Ryzen 9 7900X</span>
+                    <span class="s-item__price">$400.00</span>
+                </li>
+            </ul>
+        </body>
+    </html>
+    """
+
+    results = client._parse_ebay_html(malformed_html, "7800X3D", "processors")
+    
+    # Both items should fail validation checks and be excluded from final results
+    assert len(results) == 0

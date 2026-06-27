@@ -1,7 +1,7 @@
-# src/analysis/aggregator.py
+# src/analysis/market_analytics_engine.py
 
 """
-Bazaar Historical Data Aggregator Service
+Bazaar Historical Data Market Analytics Engine
 
 This module calculates moving statistical metrics (central tendencies, pricing boundaries, 
 and shipping averages) from historical transactional data stores and updates the analytical 
@@ -16,7 +16,7 @@ from src.database.models import HistoricalMarketItemModel
 
 logger = logging.getLogger("BazaarPipeline")
 
-class HistoricalAggregatorService:
+class MarketAnalyticsEngine:
     def __init__(self, db_manager):
         self.db_manager = db_manager
 
