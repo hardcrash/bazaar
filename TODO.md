@@ -1,9 +1,9 @@
 Bazaar Development Roadmap
 🚀 High-Priority: Active Listings & Resilience
 
-    [ ] Migrate Selection Logic: Move EBAY_SELECTORS_MATRIX from the client class into a standalone config/selectors.yaml file for decoupled maintenance.
+    [X] Migrate Selection Logic: Move EBAY_SELECTORS_MATRIX from the client class into a standalone config/selectors.yaml file for decoupled maintenance.
 
-    [ ] Refactor Extraction Methods: Update _extract_title, _extract_price, etc., in ebay_scrape_client.py to iterate through the new selector matrix dynamically rather than using hard-coded lookups.
+    [X] Refactor Extraction Methods: Update _extract_title, _extract_price, etc., in ebay_scrape_client.py to iterate through the new selector matrix dynamically rather than using hard-coded lookups.
 
     [ ] Active Listing Pipeline: Pivot development to the Active Listings module using the official eBay API (Trading/Finding APIs) to preserve scraper credits.
 
@@ -11,7 +11,7 @@ Bazaar Development Roadmap
 
 📊 Data Infrastructure & Analytics
 
-    [ ] Database Refinement: Cleanup the historical_market_items table (prune duplicates, normalize schema, enforce constraints).
+    [X] Database Refinement: Cleanup the historical_market_items table (prune duplicates, normalize schema, enforce constraints).
 
     [ ] Local Metrics Troubleshooting: Develop a "Offline Analysis" routine to compute historical_metrics directly from current bazaar.db entries without triggering outbound API/scraper calls.
 
