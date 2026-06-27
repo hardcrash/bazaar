@@ -18,6 +18,10 @@ ebay:
     - "[class*='item__title']"                    # Fluid variant fallback: row style title matchers
     - "span[role='heading']"                       # High-stability accessible reader fallback anchor
 
+  links:
+    - ".s-item__link"                             # Standard BEM desktop listing product url anchor path
+    - "a[href*='/itm/']"                          # Structural fallback targeting internal canonical routing
+
   prices:
     - "span.s-card__price"                        # Precise atomic match for compound typography lists
     - ".s-card__price"                            # Core modular layout layout tier pricing tag

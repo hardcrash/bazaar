@@ -7,7 +7,7 @@ from typing import List, Optional, Union
 
 logger = logging.getLogger("BazaarPipeline")
 
-class EbayClient:
+class EbayApiClient:
     def __init__(self, config):
         self.config = config
         self.use_sandbox = self.config.params.get("use_sandbox", True)

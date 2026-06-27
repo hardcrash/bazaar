@@ -22,6 +22,16 @@ from src.core.models import MarketItem
 from src.api.ebay.ebay_scrape_provider import EbayScraperProvider
 from src.api.ebay.providers.scrapeops_provider import ScrapeOpsProvider
 from src.api.ebay.providers.scraperapi_provider import ScraperApiProvider
+from src.api.ebay.scrape_parsers.dom import (
+    should_skip_title,
+    find_first_match,
+    bubble_to_container_root,
+    is_valid_listing,
+    harvest_fallback_links,
+    harvest_raw_title_text,
+    harvest_item_identifiers 
+)
+from src.api.ebay.scrape_parsers.metrics import sanitize_title_noise
 
 class EbayScrapeClient:
     """
@@ -144,7 +154,9 @@ class EbayScrapeClient:
             query_params["_udhi"] = f"{max_price:.2f}"
 
         encoded_params = urlencode(query_params)
+        # eBay's legacy search endpoint is typically 'sch/i.html'
         return f"https://www.ebay.com/sch/i.html?{encoded_params}"
+
 
     def _resolve_provider_sequence(self, configured_providers: dict, strategy: Any) -> List[str]:
         available_keys = list(configured_providers.keys())
@@ -178,9 +190,7 @@ class EbayScrapeClient:
     def _instantiate_provider_engine(self, provider_key: str, provider_cfg: dict) -> Optional[Any]:
         key_lower = provider_key.lower()
         try:
-            if "scraperapi" in key_lower:
-                return ScraperApiProvider(self.provider.config, provider_cfg)
-            elif "scrapeops" in key_lower:
+            if "scraperapi" in key_lower:               
                 return ScrapeOpsProvider(self.provider.config, provider_cfg)
             
             logger.error(f"⚠️ Unrecognized structural provider string configuration: {provider_key}")
@@ -289,11 +299,10 @@ class EbayScrapeClient:
         for item in listings:
             try:
                 title = self._extract_title(item)
-                if not title:
-                    metrics["no_title"] += 1
-                    continue
-                if "shop on" in title.lower():
-                    metrics["shop_on"] += 1
+                skip, metric_key = should_skip_title(title)
+                if skip:
+                    if metric_key:
+                        metrics[metric_key] += 1
                     continue
 
                 item_id, item_url = self._extract_identifiers(item)                    
@@ -331,7 +340,6 @@ class EbayScrapeClient:
                     data_grade="BRONZE"
                 )
                 
-                # Hydrate seller keys safely if columns map down cleanly
                 for key, val in seller_data.items():
                     if hasattr(market_item, key):
                         setattr(market_item, key, val)
@@ -348,46 +356,23 @@ class EbayScrapeClient:
     
     def _isolate_listing_nodes(self, soup: BeautifulSoup) -> Tuple[List[Any], str]:
         """Isolates the listing elements out of the DOM, pulling layout parameters directly from the selector matrix."""
-        river_scope = None
-        # FIX: Point to the dynamic selectors matrix key to prevent NameError
-        for r_sel in self.EBAY_SELECTORS_MATRIX.get("rivers", []):
-            container = soup.select_one(r_sel)
-            if container:
-                river_scope = container
-                break
-                
+        river_scope = find_first_match(soup, self.get_selectors_for("rivers"))
         active_scope = river_scope if river_scope else soup
 
         try:
-            # Gather all candidate target containers from our dynamic configuration ledger
-            selectors = self.EBAY_SELECTORS_MATRIX["containers"]
-            
+            selectors = self.get_selectors_for("containers")
             listings = active_scope.select(", ".join(selectors))
             unique_listings = []
             seen_ids = set()
             
             if listings:
                 for node in listings:
-                    # Bubble up execution reference if selector trapped nested elements
-                    if not any(k in node.get('class', []) for k in ['s-item', 's-card']) and node.name != 'li':
-                        ancestor = node.find_parent('li', class_=lambda c: c and any(k in c for k in ['s-item', 's-card'])) or \
-                                   node.find_parent('div', class_=lambda c: c and any(k in c for k in ['s-item', 's-card', 'su-card']))
-                        if ancestor:
-                            node = ancestor
-                    
+                    node = bubble_to_container_root(node)
                     node_id = id(node)
-                    if node_id not in seen_ids:
-                        classes = node.get('class', [])
-                        node_id_str = str(node.get("id", ""))
-                        class_str = "".join(classes)
-                        
-                        # Filter tracking noise elements and paid placement metrics
-                        if node.select_one(".s-item__ad-modifier") or node.select_one(".s-item__sponsored-label"):
-                            continue
-                            
-                        if "s-item__placeholder" not in classes and "s-item--watch-tile" not in class_str and "listing1" not in node_id_str:
-                            seen_ids.add(node_id)
-                            unique_listings.append(node)
+                    
+                    if node_id not in seen_ids and is_valid_listing(node):
+                        seen_ids.add(node_id)
+                        unique_listings.append(node)
                             
                 if unique_listings:
                     return unique_listings, "Hardened Primary Grid Elements"
@@ -396,80 +381,30 @@ class EbayScrapeClient:
             logger.debug(f"Stage 1 modern grid selector failed: {e}")
 
         try:
-            item_links = active_scope.find_all('a', href=lambda h: h and '/itm/' in h)
-            seen_parents = set()
-            listings = []
-            
-            for link in item_links:
-                parent = link.find_parent('li') or \
-                         link.find_parent('div', class_=lambda c: c and any(k in c for k in ['s-item', 'result', 'item', 'card']))
-                
-                if parent and id(parent) not in seen_parents:
-                    node_id_str = str(parent.get("id", ""))
-                    if "listing1" not in node_id_str and not parent.select_one(".s-item__ad-modifier"):
-                        seen_parents.add(id(parent))
-                        listings.append(parent)
-                    
+            listings = harvest_fallback_links(active_scope)
             if listings:
                 return listings, "Rendered JS Link-Driven Parent Extraction Engine (Scoped)"
-                
         except Exception as e:
             logger.error(f"💥 Stage 4 link harvesting crashed: {e}")
 
         return [], "None"
 
     def _extract_title(self, item: Tag) -> Optional[str]:
-        """Extracts the item title text string from the DOM matrix layer targets."""
-        raw_text = None
-        for selector in self.EBAY_SELECTORS_MATRIX["titles"]:
-            title_node = item.select_one(selector)
-            if title_node:
-                # Optimized to extract nested styling spans, falling back cleanly if none are found
-                inner_spans = title_node.find_all('span')
-                if inner_spans:
-                    raw_text = inner_spans[-1].get_text(strip=True)
-                else:
-                    raw_text = title_node.get_text(strip=True)
-                break
-                
-        if not raw_text:
-            img_node = item.select_one(".s-item__image-img, img")
-            if img_node and img_node.get('alt'):
-                raw_text = img_node.get('alt')
-     
+        """Extracts and purges titles using platform rules and categorical strategy context."""
+        raw_text = harvest_raw_title_text(item, self.get_selectors_for("titles"))
         if not raw_text:
             return None
-
-        noise_filters = ["New Listing", "Opens in a new window or tab", "SPONSORED"]
-        sanitized = raw_text
-        for noise in noise_filters:
-            sanitized = re.sub(re.escape(noise), "", sanitized, flags=re.IGNORECASE)
             
-        return sanitized.strip()
+        # Safely extract strategy config from instance if it exists, otherwise default gracefully
+        strategy_config = getattr(self, "current_strategy_config", None) or {}
+        strategy_blacklist = strategy_config.get("local_noise_blacklist", [])
+        
+        return sanitize_title_noise(raw_text, custom_blacklist=strategy_blacklist)
 
-    def _extract_identifiers(self, item: Tag) -> Tuple[Optional[str], Optional[str]]:
+    def _extract_identifiers(self, item: Tag) -> Tuple[Optional[str], Optional[str]]:   
         """Isolates unique platform identifiers and absolute listings urls without tracking parameters."""
-        item_id = item.get('data-id') or item.get('data-itemid')
-        
-        link_elem = (
-            item.select_one(".s-item__link") or
-            item.select_one("a[href*='/itm/']") or
-            item.find('a')
-        )
-        
-        item_url = ""
-        if link_elem and link_elem.has_attr('href'):
-            item_url = link_elem['href'].split('?')[0]
-
-        if not item_id and item_url:
-            item_id_match = re.search(r'/itm/(\d+)', item_url)
-            if item_id_match:
-                item_id = item_id_match.group(1)
-
-        if not item_id or not item_url or "/itm/" not in item_url:
-            return None, None
-
-        return item_id, item_url
+        link_selectors = self.get_selectors_for("links")
+        return harvest_item_identifiers(item, link_selectors)
 
     def _extract_price(self, item: Tag, title: str) -> Optional[Tuple[float, bool]]:
         price_elem = None
