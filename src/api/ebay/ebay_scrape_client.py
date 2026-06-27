@@ -19,7 +19,7 @@ from pathlib import Path
 from urllib.parse import urlencode
 
 from src.core.models import MarketItem
-from src.api.ebay.ebay_scrape_provider import EbayScraperProvider
+from src.api.ebay.providers.ebay_scrape_provider import EbayScrapeProvider
 from src.api.ebay.providers.scrapeops_provider import ScrapeOpsProvider
 from src.api.ebay.providers.scraperapi_provider import ScraperApiProvider
 from src.api.ebay.scrape_parsers.dom import (
@@ -48,7 +48,7 @@ class EbayScrapeClient:
 
     def __init__(self, config, config_path: Optional[str] = None):
         self.config = config
-        self.provider = EbayScraperProvider(config=config)
+        self.provider = EbayScrapeProvider(config=config)
         
         # 📄 Hardened Selectors Matrix Orchestration
         # Looks for settings/selectors.yaml in the project directory

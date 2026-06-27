@@ -3,11 +3,11 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from src.api.ebay.ebay_scrape_client import EbayScrapeClient
-from src.api.ebay.ebay_scrape_provider import EbayScraperProvider
+from src.api.ebay.providers.ebay_scrape_provider import EbayScrapeProvider
 
 @patch('requests.get')
 @patch.object(EbayScrapeClient, 'refresh_account_balances', return_value=None)
-@patch.object(EbayScraperProvider, 'refresh_account_balances', return_value=None)
+@patch.object(EbayScrapeProvider, 'refresh_account_balances', return_value=None)
 def test_scrape_handles_503_error(mock_prov_refresh, mock_client_refresh, mock_get):
     """
     Verifies that a 503 error safely blacklists a provider, triggers

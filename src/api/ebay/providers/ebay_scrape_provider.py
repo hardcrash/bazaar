@@ -13,7 +13,7 @@ from src.api.ebay.providers.scrapeops_provider import ScrapeOpsProvider
 from src.api.ebay.providers.scraperapi_provider import ScraperApiProvider
 
 
-class EbayScraperProvider:
+class EbayScrapeProvider:
     """
     Dedicated infrastructure layer managing network availability, provider key initialization,
     billing/balance telemetry, and circuit breakers for anti-bot bypass.
