@@ -2,84 +2,99 @@
 """
 Bazaar Domain Infrastructure Models
 
-Establishes an inheritance hierarchy using a shared abstract BaseMarketItem 
-to separate dynamic active market sweeps from immutable historical transaction entries.
+Establishes an optimized, clean inheritance hierarchy separating volatile 
+real-time sourcing models from immutable archival data warehouse models,
+fully equipped for multi-platform scaling.
 """
 
 from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
-class HistoricalMarketItem(BaseModel):
+class BaseMarketItem(BaseModel):
     """
-    Abstract structural base class containing every common attribute shared between 
-    live marketplace listings and archived historical sales transactions.
+    Immutable core contract. Every single item tracking through Bazaar 
+    must have these base identifiers, financial metrics, seller trust markers, 
+    and source platform tracking.
     """
     model_config = ConfigDict(
         populate_by_name=True,
         arbitrary_types_allowed=True
     )
 
-    # Core Identifiers
+    # Core Identifiers & Provenance
     item_id: str = Field(..., description="Unique platform item identifier (e.g., eBay Item ID)")
+    source_platform: str = Field("ebay", description="Original sourcing marketplace pipeline index (e.g., ebay, mercari, jawa)")
     model_name: str = Field(..., description="Target hardware baseline model reference name (e.g., Ryzen 5800X)")
-    category: str = Field(..., description="System normalization category code classification")
+    category: str = Field(..., description="System normalization category code classification (e.g., CPU)")
 
-    # Textual Information
+    # Textual Information & Extracted Deep Payloads
     raw_title: str = Field(..., description="Unmodified title string directly out of the platform/DOM asset")
-    title: str = Field(..., description="Cleaned, scrubbed, or variant-appended presentation title")
+    title: str = Field(..., description="Cleaned, scrubbed presentation title")
+    description: Optional[str] = Field(None, description="Full rich text or plaintext description body from the item detail page")
+    
+    # Marketplace Structural Metadata Pool (Captures MPN, Socket Type, Brand, Cores, etc.)
+    item_specifics: Dict[str, Any] = Field(default_factory=dict, description="Structured metadata attributes key-value map")
 
-    # Pricing Metrics Normalized to Float Scalars
-    price: float = Field(0.0, description="Spot price tag, current high bid, or base clearing price")
-    shipping_cost: float = Field(0.0, description="Extracted localized logistics or delivery surcharges")
+    # Pricing Metrics
+    price: float = Field(0.0, description="Base listing cost or final clearing price")
+    shipping_cost: float = Field(0.0, description="Extracted localized delivery surcharges")
     total_cost: float = Field(0.0, description="Computed Gross Capital Cost (Price + Shipping)")
     currency: str = Field("USD", description="Standard ISO alpha financial tracking code")
-
-    # Universal Platform Indicators
-    item_url: str = Field("", description="Fully sanitized absolute tracking address pointer link")
-    seller_username: Optional[str] = Field(None, description="The platform account handle of the selling party")
-    is_top_rated: bool = Field(False, description="Whether the seller carries elite platform status tags")
+    
+    # Global Classification & Pipeline Control
+    condition_id: int = Field(3000, description="Platform numerical condition mapping code (e.g., 3000=Used, 7000=Parts)")
     process_state: str = Field(..., description="Pipeline lifecycle status tracking token")
 
-
-class ActiveMarketItem(HistoricalMarketItem):
-    """
-    Unified domain model validating a live, volatile asset monitoring unit.
-    Maps directly onto the mutable 'active_market_items' database infrastructure table.
-    """
-    # Override default state for active loops
-    process_state: str = Field("ACTIVE", description="Default tracking state for live items")
-    
-    # Volatile Bidding & Inventory Attributes
-    bid_count: int = Field(0, description="Current number of placed bids on active auctions")
-    quantity_available: int = Field(1, description="Volume count remaining for purchase")
-    date_fetched: datetime = Field(default_factory=datetime.now, description="Moment this live snapshot was read")
-    image_urls: List[str] = Field(default_factory=list, description="Collection array of absolute asset image addresses")
-
-class HistoricalMarketItem(HistoricalMarketItem):
-    """
-    Unified domain model tracking an archival, historical transactional sales entry.
-    Maps directly onto the immutable, permanent 'historical_market_items' logging table.
-    """
-    # Override default state for closed items
-    process_state: str = Field("PENDING", description="Pipeline lifecycle token: PENDING, PENDING_DEEP_HARVEST, HYDRATED, COMPLETED")
-    
-    # Condition & Verification Flags
-    condition_id: int = Field(3000, description="Platform numerical condition mapping code (e.g., 3000=Used)")
-    is_sold: bool = Field(True, description="Historical verification state flag marker")
-    source_platform: str = Field("ebay", description="Original distribution pipeline platform index")
-    quantity_sold: int = Field(1, description="Volume count cleared within the listing configuration")
-    bid_count: int = Field(0, description="Total bids placed before auction clearance closed")
-
-    # Deep Hydration Seller Telemetry Fields (Silver Grade)
+    # Seller Trust Profiles (Unified across Live and Archival States)
+    seller_username: Optional[str] = Field(None, description="The platform account handle of the selling party")
     feedback_score: Optional[int] = Field(None, description="The absolute feedback score count of the seller")
     feedback_percentage: Optional[float] = Field(None, description="Positive transaction ratio profile metric")
 
-    # Custom Context Attribute Domain Flags
-    has_bent_pins: bool = Field(False, description="Hardware defect indicator parsing safety catch")
-    is_for_parts_or_not_working: bool = Field(False, description="Evaluated functional status boolean representation")
-    is_parsed_by_agent: bool = Field(False, description="Verification loop assertion milestone tracker")
+    # Universal Domain Defect & Condition Flags
+    has_bent_pins: bool = Field(False, description="Hardware defect safety offset check (e.g., bent pins on a CPU)")
+    is_for_parts_or_not_working: bool = Field(False, description="Evaluated real-time/historical functional status flag")
+    
+    # Geographic Context
+    item_location: Optional[str] = Field(None, description="Textual origin location of the item (e.g., 'San Jose, CA')")
 
-    # Architectural Grade Management
-    data_grade: str = Field("BRONZE", description="Information depth structure index tier: BRONZE, SILVER, GOLD")
+
+class ActiveMarketItem(BaseMarketItem):
+    """
+    Real-time volatile tracking unit optimized for live sourcing, 
+    risk-mitigation filtering, and fast arbitrage score matching.
+    """
+    process_state: str = Field("ACTIVE", description="Default tracking state for live items")
+    date_fetched: datetime = Field(default_factory=datetime.now, description="Moment this live snapshot was read")
+    
+    # Live Sourcing Context Filters
+    is_top_rated: bool = Field(False, description="Whether the live seller carries elite platform status tags")
+    
+    # Bidding & Inventory Telemetry
+    bid_count: int = Field(0, description="Current number of placed bids on active auctions")
+    quantity_available: int = Field(1, description="Volume count remaining for purchase")
+    
+    # Presentation Assets
+    item_url: str = Field("", description="Sanitized absolute tracking link")
+    image_urls: List[str] = Field(default_factory=list, description="Array of image addresses for front-end evaluation")
+    
+    # Arbitrage Metrics
+    sourcing_score: float = Field(0.0, description="Calculated arbitrage sourcing quality score matrix")
+
+
+class HistoricalMarketItem(BaseMarketItem):
+    """
+    Archival permanent log entry optimized for analytical price modeling 
+    and baseline market value calculations.
+    """
+    process_state: str = Field("PENDING", description="Archival state: PENDING, HYDRATED, COMPLETED")
     timestamp: datetime = Field(default_factory=datetime.now, description="System entry generation moment trace")
+    
+    # Settlement Metrics
+    is_sold: bool = Field(True, description="Historical verification state flag marker")
+    quantity_sold: int = Field(1, description="Volume count cleared within the listing configuration")
+    bid_count: int = Field(0, description="Total bids placed before auction clearance closed")
+    end_date: Optional[datetime] = Field(None, description="The moment this transaction closed and cleared")
+
+    # Warehouse Metadata
+    data_grade: str = Field("BRONZE", description="Information depth structure index tier: BRONZE, SILVER, GOLD")

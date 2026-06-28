@@ -1,3 +1,5 @@
+# src/database/models.py
+
 """
 Bazaar Database Schema Models
 
