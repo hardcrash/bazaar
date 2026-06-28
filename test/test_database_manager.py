@@ -9,9 +9,9 @@ in-memory SQLite test fixtures to verify table construction and upsert capabilit
 
 import pytest
 from unittest.mock import MagicMock
-from src.core.models import MarketItem
+from src.core.models import HistoricalMarketItem
 from src.database.db_manager import DatabaseManager
-from src.database.models import ActiveMarketItemModel
+from src.database.models import Base, ActiveMarketItemModel, HistoricalMarketItemModel
 
 @pytest.fixture
 def mock_config():
@@ -28,8 +28,8 @@ def db_manager(mock_config):
 
 @pytest.fixture
 def sample_market_item():
-    """Returns a realistic MarketItem dataclass instance for storage testing."""
-    return MarketItem(
+    """Returns a realistic BaseMarketItem dataclass instance for storage testing."""
+    return HistoricalMarketItem(
         item_id="123456789012",
         model_name="5800X",
         category="164",
@@ -61,8 +61,9 @@ def test_database_initialization(db_manager):
     assert "historical_metrics" in tables
 
 def test_insert_harvested_item_success(db_manager, sample_market_item):
-    """Verifies a fresh MarketItem dataclass converts and saves to the database."""
-    db_manager.insert_harvested_item(sample_market_item)
+    """Verifies an active market item converts and saves to the database pool."""
+    # 🛸 Update to use your direct active registration tracker
+    db_manager.commit_active_listings([sample_market_item])
 
     session = db_manager.SessionLocal()
     db_record = session.query(ActiveMarketItemModel).filter_by(item_id="123456789012").first()
@@ -85,7 +86,8 @@ def test_insert_harvested_item_upsert_behavior(db_manager, sample_market_item):
     db_manager.insert_harvested_item(sample_market_item)
 
     session = db_manager.SessionLocal()
-    records = session.query(ActiveMarketItemModel).filter_by(item_id="123456789012").all()
+    # 🛸 Query the correct Historical table to match the model type!
+    records = session.query(HistoricalMarketItemModel).filter_by(item_id="123456789012").all()
     session.close()
 
     assert len(records) == 1  # No duplicates created

@@ -1,10 +1,8 @@
 # src/analysis/strategy/base_category_strategy.py
 
-# src/analysis/strategy/base_strategy.py
-
 from abc import ABC, abstractmethod
 from typing import List, Tuple
-from src.core.models import MarketItem
+from src.core.models import HistoricalMarketItem
 
 class BaseCategoryStrategy(ABC):
     def __init__(self, category_name: str, yaml_data: dict):

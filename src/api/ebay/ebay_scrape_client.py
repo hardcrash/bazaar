@@ -18,7 +18,7 @@ from loguru import logger
 from pathlib import Path
 from urllib.parse import urlencode
 
-from src.core.models import MarketItem
+from src.core.models import HistoricalMarketItem
 from src.api.ebay.providers.ebay_scrape_provider import EbayScrapeProvider
 from src.api.ebay.providers.scrapeops_provider import ScrapeOpsProvider
 from src.api.ebay.providers.scraperapi_provider import ScraperApiProvider
@@ -108,7 +108,7 @@ class EbayScrapeClient:
         model_name: str,
         strategy: str,
         conditions: Optional[List[int]] = None
-    ) -> List[MarketItem]:
+    ) -> List[HistoricalMarketItem]:
         """Executes a historical sales sweep by relying on the provider engine for transport."""
         target_ebay_url = self._build_target_url(query, min_price, max_price, category_id, conditions)
         logger.info(f"🔗 Target Upstream eBay URL Generated: {target_ebay_url}")
@@ -329,7 +329,7 @@ class EbayScrapeClient:
                 shipping_cost = self._extract_shipping(item)
                 seller_data = self._extract_seller_metrics(item)
 
-                market_item = MarketItem(
+                market_item = HistoricalMarketItem(
                     item_id=item_id,
                     model_name=model_name,
                     category=category_id,
@@ -496,7 +496,7 @@ class EbayScrapeClient:
                 f"Crashes: {metrics['exceptions']}"
             )
 
-    def parse_msku_item_page(self, html_content: str, base_item: MarketItem) -> List[MarketItem]:
+    def parse_msku_item_page(self, html_content: str, base_item: HistoricalMarketItem) -> List[HistoricalMarketItem]:
         if not html_content or not html_content.strip():
             logger.error(f"[❌] Deep Harvest Aborted: Empty payload for ID: {base_item.item_id}")
             return []
@@ -520,7 +520,7 @@ class EbayScrapeClient:
         logger.warning(f" [⚠️] Multi-SKU Schema Exception: All fallback matrices missed for ID: {base_item.item_id}")
         return []
 
-    def parse_standalone_item_hydration(self, html_content: str, item: MarketItem, strategy: Optional[Any] = None) -> MarketItem:
+    def parse_standalone_item_hydration(self, html_content: str, item: HistoricalMarketItem, strategy: Optional[Any] = None) -> HistoricalMarketItem:
         if not html_content:
             logger.warning(f"⚠️ Blank HTML response packet passed to hydrator for item {item.item_id}")
             return item

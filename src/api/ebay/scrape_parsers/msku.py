@@ -12,7 +12,7 @@ import json
 import logging
 from bs4 import Tag, BeautifulSoup
 from typing import List, Optional
-from src.core.models import MarketItem  
+from src.core.models import HistoricalMarketItem  
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +26,8 @@ def extract_msku_metadata(html_content: str) -> dict:
         "has_bent_pins": any(x in html_upper for x in ["BENT PIN", "BROKEN PIN", "DAMAGED PIN", "MISSING PIN"])
     }
 
-import json
-import re
 
-def parse_msku_json(html_content: str, base_item: MarketItem) -> List[MarketItem]:
+def parse_msku_json(html_content: str, base_item: HistoricalMarketItem ) -> List[HistoricalMarketItem ]:
     """Parses the primary MSKU JSON engine using raw_decode for nested support."""
     # Find the starting point of the JSON object
     start_match = re.search(r'"MSKU"\s*:\s*\{', html_content)
@@ -77,9 +75,9 @@ def parse_msku_json(html_content: str, base_item: MarketItem) -> List[MarketItem
         logger.error(f"MSKU JSON parsing failed: {e}")
         return []
 
-def _build_child_item(base: MarketItem, id_suffix: str, title_suffix: str, labels: List[str], price: float, out_of_stock: bool) -> MarketItem:
+def _build_child_item(base: HistoricalMarketItem , id_suffix: str, title_suffix: str, labels: List[str], price: float, out_of_stock: bool) -> MarketItem:
     """Helper to maintain consistency in MarketItem construction."""
-    return MarketItem(
+    return HistoricalMarketItem (
         item_id=f"{base.item_id}{id_suffix}",
         model_name=base.model_name,
         category=base.category,
@@ -98,7 +96,7 @@ def _build_child_item(base: MarketItem, id_suffix: str, title_suffix: str, label
         data_grade="SILVER"
     )
 
-def parse_var_model_json(html_content: str, base_item: MarketItem) -> List[MarketItem]:
+def parse_var_model_json(html_content: str, base_item: HistoricalMarketItem ) -> List[HistoricalMarketItem ]:
     """Handles the alternative itmVarModel/ItemJson variant extraction."""
     var_model_match = re.search(r'"itmVarModel"\s*:\s*(\{.+?\})(?:\s*,\s*|$)', html_content)
     if not var_model_match:
@@ -131,7 +129,7 @@ def parse_var_model_json(html_content: str, base_item: MarketItem) -> List[Marke
         logger.error(f"Error decoding alternative variant context model: {e}")
     return records
 
-def parse_dom_sku_options(soup: BeautifulSoup, base_item: MarketItem) -> List[MarketItem]:
+def parse_dom_sku_options(soup: BeautifulSoup, base_item: HistoricalMarketItem ) -> List[HistoricalMarketItem ]:
     """Handles the final fallback: DOM based SKU listbox extraction."""
     records = []
     sku_options = soup.find_all(class_="listbox__option", attrs={"data-sku-value-name": True})

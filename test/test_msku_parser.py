@@ -6,12 +6,12 @@ from src.api.ebay.scrape_parsers.msku import (
     parse_var_model_json, 
     parse_dom_sku_options
 )
-from src.core.models import MarketItem
+from src.core.models import HistoricalMarketItem
 
-# Mock MarketItem fixture
+# Mock BaseMarketItem fixture
 @pytest.fixture
 def base_item():
-    return MarketItem(
+    return HistoricalMarketItem(
         item_id="123",
         model_name="TestModel",
         category="Tech",

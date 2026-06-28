@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from src.api.ebay.ebay_scrape_client import EbayScrapeClient
-from src.core.models import MarketItem
+from src.core.models import HistoricalMarketItem
 
 @pytest.fixture
 def mock_config():
@@ -23,7 +23,7 @@ def test_parse_msku_item_page_success(mock_config):
     client = EbayScrapeClient(config=mock_config)
 
     # FIXED: Realigned 'category_id=' down to data contract parameter 'category='
-    base_item = MarketItem(
+    base_item = HistoricalMarketItem(
         item_id="12345", model_name="5800X", category="164",
         raw_title="Parent Title", title="Parent Title", price=100.0,
         shipping_cost=0.0, total_cost=100.0, currency="USD",
@@ -32,7 +32,7 @@ def test_parse_msku_item_page_success(mock_config):
     )
 
     # Replicate the concrete data schema structures explicitly
-    mock_variant_output = MarketItem(
+    mock_variant_output = HistoricalMarketItem(
         item_id="12345-999", model_name="5800X", category="164",
         raw_title="Parent Title [MSKU VARIANT]", title="Parent Title [MSKU VARIANT]", price=202.50,
         shipping_cost=0.0, total_cost=202.50, currency="USD",
@@ -53,7 +53,7 @@ def test_scrape_client_returns_all_required_market_item_fields(mock_config):
     """
     Verifies that the internal HTML parsing logic successfully extracts and maps
     every field requested by the downstream SQLAlchemy engine and strictly follows
-    the rules established by the MarketItem data contract.
+    the rules established by the BaseMarketItem data contract.
     """
     client = EbayScrapeClient(config=mock_config)
 
@@ -80,7 +80,7 @@ def test_scrape_client_returns_all_required_market_item_fields(mock_config):
     )
 
     assert len(parsed_items) == 1, "The core parser completely missed the sample raw listing."
-    item: MarketItem = parsed_items[0]
+    item: HistoricalMarketItem = parsed_items[0]
 
     # Verify Platform Identifiers
     assert item.item_id == "123456789012"

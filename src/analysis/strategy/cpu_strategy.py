@@ -3,7 +3,7 @@
 import re
 from loguru import logger
 from src.analysis.strategy.base_category_strategy import BaseCategoryStrategy
-from src.core.models import MarketItem
+from src.core.models import HistoricalMarketItem
 
 class CPUStrategy(BaseCategoryStrategy):
 

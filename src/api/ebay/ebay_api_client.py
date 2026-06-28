@@ -10,17 +10,27 @@ logger = logging.getLogger("BazaarPipeline")
 class EbayApiClient:
     def __init__(self, config):
         self.config = config
-        self.use_sandbox = self.config.params.get("use_sandbox", True)
 
+        # Handle AppConfig top-level attributes or look into a .params dictionary fallback
+        if hasattr(config, "params"):
+            params_dict = config.params
+        else:
+            params_dict = getattr(config, "_raw_config_data", {})
+
+        # Resolve sandbox environment variables
+        self.use_sandbox = getattr(config, "use_sandbox", params_dict.get("use_sandbox", True))
         env_key = "ebay_sandbox" if self.use_sandbox else "ebay_production"
-        creds = self.config.params.get(env_key, {})
-
+        
+        # Pull environment credentials safely
+        creds = getattr(config, env_key, params_dict.get(env_key, {}))
         self.client_id = creds.get("client_id")
         self.client_secret = creds.get("client_secret")
 
+        # Session network infrastructure setup
         self.session = requests.Session()
         self.platform_name = "ebay"
 
+        # Endpoints allocation matching chosen environment context
         self.base_url = "https://api.sandbox.ebay.com" if self.use_sandbox else "https://api.ebay.com"
         self.auth_url = f"{self.base_url}/identity/v1/oauth2/token"
 

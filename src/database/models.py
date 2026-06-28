@@ -47,6 +47,8 @@ class ActiveMarketItemModel(Base):
     process_state = Column(String, default="ACTIVE", nullable=False)
     date_fetched = Column(DateTime, default=datetime.datetime.now, nullable=False)
 
+    image_urls = Column(String, nullable=True)
+
 
 class HistoricalMarketItemModel(Base):
     """

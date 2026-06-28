@@ -4,6 +4,8 @@ import time
 from loguru import logger
 from typing import Dict, Any, Optional, List
 
+# 🚀 Bring in both client tracks cleanly
+from src.api.ebay.ebay_api_client import EbayApiClient
 from src.api.ebay.ebay_scrape_client import EbayScrapeClient
 from src.database.db_manager import DatabaseManager
 
@@ -15,7 +17,10 @@ class BaseController:
         # Database Manager passed down as a single source of truth dependency
         self.db_manager = db_manager or DatabaseManager(config=config)
 
-        # Scrape client remains isolated to parsing and mapping data collections
+        # 🛸 Direct REST API Engine (Active Sweep Track)
+        self.ebay_api_client = EbayApiClient(config=config)
+
+        # 🕷️ Scrape client remains isolated to parsing and mapping data collections (Historical Track)
         self.scrape_client = EbayScrapeClient(config=config)
         self.analytics_service = getattr(self, "analytics_service", None)
 
@@ -51,7 +56,7 @@ class BaseController:
             upper = min(current + step, max_p)
             brackets.append((current, upper))
             current += step
-            return brackets
+        return brackets
 
     def run_harvest(self, *args, **kwargs) -> Dict[str, Any]:
         """To be implemented distinctly by downstream specialized subclass execution engines."""

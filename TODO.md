@@ -1,4 +1,14 @@
 Bazaar Development Roadmap
+
+## 🚀 Upcoming Enhancements
+
+### Data Processing & Normalization
+- [ ] **Implement Core Title Sanitization Engine**
+  - **Context:** Currently, `HistoricalMarketItem.title` and `ActiveMarketItem.title` default to the raw, noisy marketplace title string (`raw_title`). 
+  - **Objective:** Create a dedicated string scrubbing utility (e.g., `src/util/text_cleaner.py`) to parse out distracting fluff words, emoji, shipping tags, and formatting noise.
+  - **Target Deliverable:** Populate the normalized `.title` attribute with clean, uniform strings (e.g., converting `"🔥 MINT !!! AMD Ryzen 7 5800X CPU 8-Core 3.8GHz Processor AM4 Tray Fast Ship"` into `"AMD Ryzen 7 5800X"`).
+  - **Impact:** Drastically improves string matching accuracy, automated categorization passes, and clean UI rendering in the PySide6 layout.
+  
 🚀 High-Priority: Active Listings & Resilience
 
     [X] Migrate Selection Logic: Move EBAY_SELECTORS_MATRIX from the client class into a standalone config/selectors.yaml file for decoupled maintenance.
