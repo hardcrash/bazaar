@@ -90,7 +90,7 @@ def _build_child_item(base: HistoricalMarketItem , id_suffix: str, title_suffix:
         condition_id=base.condition_id,
         is_sold=base.is_sold,
         source_platform="ebay",
-        item_url=base.item_url,
+        item_url = getattr(base, "item_url", ""),
         quantity_sold=0 if out_of_stock else 1,
         process_state="COMPLETED",
         data_grade="SILVER"

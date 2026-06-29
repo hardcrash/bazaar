@@ -1,5 +1,4 @@
 # src/database/models.py
-
 """
 Bazaar Database Schema Models
 
@@ -9,11 +8,12 @@ from historical transactional logging entries.
 """
 
 import datetime
-from sqlalchemy import Column, String, Float, Integer, DateTime, Boolean, Table
+from sqlalchemy import Column, String, Float, Integer, DateTime, Boolean, Table, JSON
 from sqlalchemy.orm import declarative_base
 
 # Modernized SQLAlchemy 2.0 Base Declaration to resolve deprecation warnings
 Base = declarative_base()
+
 
 class ActiveMarketItemModel(Base):
     """
@@ -21,35 +21,49 @@ class ActiveMarketItemModel(Base):
     """
     __tablename__ = "active_market_items"
 
-    # Core Identity Identifiers
+    # Core Identity Identifiers & Provenance
     item_id = Column(String, primary_key=True, index=True)
+    source_platform = Column(String, default="ebay", nullable=False, index=True)
     model_name = Column(String, nullable=False, index=True)
-    category = Column(String, nullable=False)
+    category = Column(String, nullable=False, index=True)
 
-    # Textual Information
+    # Textual Information & Rich Contents
     raw_title = Column(String, nullable=False)
     title = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    
+    # Structural Metadata Storage Matrix
+    item_specifics = Column(JSON, default=dict, nullable=True)
 
     # Pricing Metrics
     price = Column(Float, default=0.0, nullable=False)
-    shipping_cost = Column(Float, default=0.0, nullable=True)
+    shipping_cost = Column(Float, default=0.0, nullable=False)
     total_cost = Column(Float, default=0.0, nullable=False)
     currency = Column(String, default="USD", nullable=False)
 
-    # Structural & Seller Telemetry Flags
+    # Classification & Defect Flags (Symmetrical)
+    condition_id = Column(Integer, default=3000, nullable=False)
+    has_bent_pins = Column(Boolean, default=False, nullable=False)
+    is_for_parts_or_not_working = Column(Boolean, default=False, nullable=False)
+
+    # Universal Platform & Seller Telemetry Context
     item_url = Column(String, default="", nullable=True)
     seller_username = Column(String, nullable=True)
     is_top_rated = Column(Boolean, default=False, nullable=True)
+    feedback_score = Column(Integer, nullable=True)
+    feedback_percentage = Column(Float, nullable=True)
+    item_location = Column(String, nullable=True)
     
-    # Live variables subject to mutation passes
+    # Volatile Live Variables
     bid_count = Column(Integer, default=0, nullable=True)
     quantity_available = Column(Integer, default=1, nullable=False)
+    image_urls = Column(JSON, default=list, nullable=True)
+    sourcing_score = Column(Float, default=0.0, nullable=True)
     
     # Pipeline Management
     process_state = Column(String, default="ACTIVE", nullable=False)
+    data_grade = Column(String, default="BRONZE", nullable=False)
     date_fetched = Column(DateTime, default=datetime.datetime.now, nullable=False)
-
-    image_urls = Column(String, nullable=True)
 
 
 class HistoricalMarketItemModel(Base):
@@ -58,52 +72,52 @@ class HistoricalMarketItemModel(Base):
     """
     __tablename__ = "historical_market_items"
 
-    # Core Identity Identifiers
+    # Core Identity Identifiers & Provenance
     item_id = Column(String, primary_key=True, index=True)
+    source_platform = Column(String, default="ebay", nullable=False, index=True)
     model_name = Column(String, nullable=False, index=True)
-    category = Column(String, nullable=False)
+    category = Column(String, nullable=False, index=True)
 
-    # Textual Information
+    # Textual Information & Rich Contents
     raw_title = Column(String, nullable=False)
     title = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    
+    # Structural Metadata Storage Matrix
+    item_specifics = Column(JSON, default=dict, nullable=True)
 
     # Pricing Metrics
     price = Column(Float, default=0.0, nullable=False)
-    shipping_cost = Column(Float, default=0.0, nullable=True)
+    shipping_cost = Column(Float, default=0.0, nullable=False)
     total_cost = Column(Float, default=0.0, nullable=False)
-    currency = Column(String, default="USD", nullable=True)
+    currency = Column(String, default="USD", nullable=False)
 
-    # Condition & Verification Flags
+    # Classification & Defect Flags (Symmetrical)
     condition_id = Column(Integer, default=3000, nullable=False)
-    is_sold = Column(Boolean, default=True, nullable=True)
-    source_platform = Column(String, default="ebay", nullable=False)
-    item_url = Column(String, default="", nullable=True)
-    quantity_sold = Column(Integer, default=1, nullable=True)
-    bid_count = Column(Integer, default=0, nullable=True)
+    has_bent_pins = Column(Boolean, default=False, nullable=False)
+    is_for_parts_or_not_working = Column(Boolean, default=False, nullable=False)
 
-    # Seller Telemetry Fields
+    # Universal Platform & Seller Telemetry Context
+    item_url = Column(String, default="", nullable=True)
     seller_username = Column(String, nullable=True)
+    is_top_rated = Column(Boolean, default=False, nullable=True)
     feedback_score = Column(Integer, nullable=True)
     feedback_percentage = Column(Float, nullable=True)
-    is_top_rated = Column(Boolean, default=False, nullable=True)
-    epid = Column(String, nullable=True)
-    buying_options = Column(String, nullable=True)
-
-    # Custom Hardware Domain Flags
-    has_bent_pins = Column(Boolean, default=False, nullable=True)
-    is_for_parts_or_not_working = Column(Boolean, default=False, nullable=True)
-    is_parsed_by_agent = Column(Boolean, default=False, nullable=True)
-
-    # Pipeline Management Lifecycles & Dynamic Chrono Bounds
-    process_state = Column(String, default="PENDING", nullable=True)
-    data_grade = Column(String, default="BRONZE", nullable=False)
+    item_location = Column(String, nullable=True)
     
-    # Chrono fields for velocity metric calculation matrices
-    item_start_date = Column(DateTime, nullable=True)
-    item_end_date = Column(DateTime, nullable=True)
-    date_listed = Column(DateTime, nullable=True)
-    date_fetched = Column(DateTime, default=datetime.datetime.now, nullable=True)
-    image_urls = Column(String, nullable=True)
+    # Settlement Metrics
+    is_sold = Column(Boolean, default=True, nullable=False)
+    quantity_sold = Column(Integer, default=1, nullable=False)
+    bid_count = Column(Integer, default=0, nullable=True)
+    end_date = Column(DateTime, nullable=True)
+    
+    # Verification Loops
+    is_parsed_by_agent = Column(Boolean, default=False, nullable=False)
+
+    # Pipeline Management Lifecycles & Warehouse Metadata
+    process_state = Column(String, default="PENDING", nullable=False)
+    data_grade = Column(String, default="BRONZE", nullable=False)
+    timestamp = Column(DateTime, default=datetime.datetime.now, nullable=False)
 
 
 # Native Metadata Table Mapping to enforce existence of historical tracking indexes
