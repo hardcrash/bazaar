@@ -1,4 +1,11 @@
 # settings/categories.yaml
+# ==============================================================================
+# CATEGORY INTERPOLATION REGISTRY - HARDWARE EXTRACTION LAYER
+# ==============================================================================
+# Configures native platform sweeps, text processing filters, and heuristic
+# validation thresholds for parsing hardware targets from volatile unstructured markets.
+# Sub-arrays handle layout token clearing, variant classification mapping, 
+# and localized noise blacklists to target specific platform conditions.
 
 CPU:
   strategy_class: "CpuStrategy"
@@ -62,9 +69,14 @@ CPU:
   # Keeps regex focused solely on capturing Zen 3 (5000 series) variants
   patterns: ["RYZEN(?:\\s+[579])?\\s+(5\\d{3}(?:X3D|X|G|GE|XT)?)\\b"]
 
-  noise_words: ["DDR4", "DDR5", "CPU", "SOCKET"]
+  title_noise_words: [
+    "DDR4", "DDR5", "CPU", "SOCKET", 
+    "L@@K", "LOOK", "MINT", "PERFECT", "TESTED", "WORKING", 
+    "FAST SHIP", "FAST SHIPPING", "FREE SHIPPING", "MUST SEE", "GREAT DEAL", 
+    "NIB", "BNIB", "NEW"
+  ]
 
-  # Native eBay API exclusion filters compiled at runtime (Keeps keyword count under 15)
+  # Native eBay API and scrape exclusion filters compiled at runtime (Keeps keyword count under 15)
   blacklist_words: [
     # "BUNDLE", "LAPTOP", "PC", "BAREBONES", "SYSTEM", "OPTANE", "P4800X", "P5800X", "HP IC"
   ]
@@ -93,24 +105,28 @@ CPU:
     "SYSTEM BUILT", "DESKTOP TOWER", "BUNDLE", "LAPTOP", "PC", "BAREBONES", "SYSTEM"
   ]
 
-  # 🌟 Fixed Indentation: Nested cleanly inside the CPU category context
+  # Paramaters for the active listings harvest pipeline.
   active_harvest:
     enabled: true
     limit_per_sweep: 200
     min_price: 50
-    max_price: 650  # Fixed threshold to encapsulate high-end 5950X chips safely
-    step_size: 10.0
+    max_price: 650
+    step_size: 600.0  
     ebay_category_id: 164
     ebay_condition: [2000, 3000, 7000]
 
+  # Parameters for the historical listings harvets pipeline.
   historical_harvest:
     enabled: true
     limit_per_sweep: 2000
     require_sold: true
-    step_size: 10.0     # 🌟 Modularity Win: Categorical step increments managed here
-    min_price_broken: 80
-    max_price_broken: 100
-    min_price_used: 110
-    max_price_used: 130 # Adjusted upwards to catch high-end functional historical sales
+    step_size: 10.0 
     ebay_category_id: [164]
     ebay_condition: []
+    # Price boundaries for broken (sourcing) parts.   
+    min_price_broken: 80
+    max_price_broken: 100
+    # Price boundaries for  used/refurbished parts. 
+    min_price_used: 110
+    max_price_used: 130 
+    

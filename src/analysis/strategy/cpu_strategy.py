@@ -1,181 +1,189 @@
 # src/analysis/strategy/cpu_strategy.py
+"""
+Bazaar Concrete CPU Processing Strategy
+
+Implements title purification, token pattern extraction, data-grade evaluation,
+and dynamic price slicing for active and historical central processing units.
+"""
 
 import re
+from typing import Dict, Any, List, Tuple, Optional
 from loguru import logger
 from src.analysis.strategy.base_category_strategy import BaseCategoryStrategy
-from src.core.models import HistoricalMarketItem
+from src.core.models import ActiveMarketItem, HistoricalMarketItem
+
 
 class CPUStrategy(BaseCategoryStrategy):
-
-    def __init__(self, category_name: str, yaml_data: dict):
-        # 1. Let BaseCategoryStrategy handle structural dictionary scoping and private backing arrays
-        super().__init__(category_name, yaml_data)
-
-        # 2. Extract specific CPU strategy structural constraints safely from self.config
+    def __init__(self, category_name: str, yaml_config: dict):
+        super().__init__(category_name, yaml_config)
+        
+        # 1. Structural extraction
+        self.noise_words = self.config.get("title_noise_words", [])
+        self.blacklist = self.config.get("local_noise_blacklist", [])
         self.multisku_models = self.config.get("multisku_models", [])
-        self.noise_words = self.config.get("noise_words", [])
+        
+        # 2. Extract and pre-compile regular expressions for core processing
+        raw_patterns = self.config.get("patterns", [])
+        if raw_patterns:
+            self.compiled_patterns = [re.compile(p, re.IGNORECASE) for p in raw_patterns]
+        else:
+            # Domain-resilient fallback pattern targeting common desktop processor series
+            self.compiled_patterns = [
+                re.compile(r'RYZEN(?:\s+[579])?\s+(5\d{3}(?:X3D|X|G|GE|XT)?)\b', re.IGNORECASE)
+            ]
 
-        # 🛡️ FIX: Resolve the read-only property safely without triggering a setter error
-        self._local_noise_blacklist = getattr(self.__class__, 'local_noise_blacklist', None)
-        if not isinstance(self._local_noise_blacklist, property):
-            # Fallback to config dictionary parse if the base property mixin is absent
-            self._local_noise_blacklist = self.config.get("local_noise_blacklist", [])
-
-        # Pre-compile regexes for each variant to allow for optional whitespace
+        # 3. Handle model variant substitutions with soft whitespace resilience
         raw_variants = self.config.get("model_variants", {})
         self.variant_regexes = {}
         for target, variants in raw_variants.items():
             target_canonical = target.replace(" ", "").upper()
             compiled_list = []
             for v in variants:
-                # 🛠️ BUG FIX: Escape each character first, THEN join them with \s*
                 pattern = r"\s*".join(re.escape(char) for char in v)
-                # Ensure the loose whitespace check matches bounding word limits
                 pattern = r"\b" + pattern + r"\b"
                 compiled_list.append((v, re.compile(pattern, re.IGNORECASE)))
             self.variant_regexes[target_canonical] = compiled_list
 
-        yaml_patterns = self.config.get("patterns", [])
-        if yaml_patterns:
-            self.model_pattern = re.compile("|".join(yaml_patterns), re.IGNORECASE)
-        else:
-            self.model_pattern = re.compile(r'RYZEN(?:\s+[579])?\s+(5\d{3}(?:X3D|X|G|GE|XT)?)\b', re.IGNORECASE)
-
-    def clean_title(self, title: str) -> str:
-        cleaned = title.replace("New Listing", "")
-        cleaned = cleaned.split("Opens in a new window")[0]
+    def clean_title(self, raw_title: str) -> str:
+        """Strips structural boilerplate text and noise terms out of the listing title."""
+        cleaned = raw_title.upper()
+        cleaned = cleaned.replace("NEW LISTING", "")
+        cleaned = cleaned.split("OPENS IN A NEW WINDOW")[0]
+        
         for word in self.noise_words:
-            cleaned = re.sub(r'\b' + re.escape(word) + r'\b', '', cleaned, flags=re.IGNORECASE)
+            cleaned = re.sub(r'\b' + re.escape(word.upper()) + r'\b', '', cleaned)
+            
         return re.sub(r'\s+', ' ', cleaned).strip()
 
-    def extract_model(self, title_upper: str, target_upper: str) -> str:
-        # 1. Priority: Check dynamic configuration variants with "fuzzy" spacing
-        target_canonical = target_upper.replace(" ", "").upper()
-        allowed_variants = self.variant_regexes.get(target_canonical, [])
+    def extract_model(self, raw_title: str) -> str:
+        """Applies configuration variants and regex signatures to find canonical CPU models."""
+        title_upper = raw_title.upper()
 
-        for original_name, regex in allowed_variants:
-            if regex.search(title_upper):
-                return original_name.upper()
+        # Check explicit spatial structural variants first
+        for target_canonical, compiled_list in self.variant_regexes.items():
+            for original_name, regex in compiled_list:
+                if regex.search(title_upper):
+                    return original_name.upper()
 
-        # 2. Priority: Check target model (strict boundary check)
-        if re.search(r'\b' + re.escape(target_upper) + r'\b', title_upper):
-            return target_upper
-
-        # 3. Fallback to Regex pattern
-        match = self.model_pattern.search(title_upper)
-        if match:
-            matched_str = match.group(1) if match.lastindex and match.group(1) else match.group(0)
-            return matched_str.upper().strip()
-
+        # Run primary pattern scanners
+        for pattern in self.compiled_patterns:
+            match = pattern.search(title_upper)
+            if match:
+                matched_str = match.group(1) if match.lastindex and match.group(1) else match.group(0)
+                return matched_str.upper().replace(" ", "")
+                
         return "UNKNOWN"
 
+    def is_valid_listing(self, cleaned_title: str, extracted_model: str) -> bool:
+        """Verifies model boundaries, local word blacklists, and Multi-SKU hazards."""
+        title_upper = cleaned_title.upper()
 
-    def is_valid(self, title: str, target_model: str) -> str:
-        title_upper = title.upper()
+        if extracted_model not in self.valid_models:
+            return False
 
-        # 1. Clean up eBay UI boilerplate text immediately so it doesn't trigger false flags
-        clean_title = title_upper.replace("OPENS IN A NEW WINDOW OR TAB", "").strip()
+        # Drop any records matching standard local blacklisted terms
+        if any(bad_word.upper() in title_upper for bad_word in self.blacklist):
+            return False
 
-        # 2. Base structural API blacklist (Safe for straight substring checks)
-        if any(word.upper() in clean_title for word in self.blacklist_words):
-            return "INVALID"
-
-        # 3. Local Noise Check with Strict Word Boundaries 🛡️
-        for term in self.local_noise_blacklist:
-            # \b rules ensure "FOR" won't look inside words or adjacent formatting slices
-            pattern = rf"\b{re.escape(term.upper())}\b"
-            if re.search(pattern, clean_title):
-                logger.debug(f"Drop -> Filter item contains blacklisted word token: '{term}'")
-                return "INVALID"
-
-        # 4. Multi-SKU Protection Loop
-        models_found = [m for m in self.multisku_models if m.upper() in clean_title]
+        # Protect against multi-SKU combo listings (e.g., "5600X OR 5800X")
+        models_found = [m for m in self.multisku_models if m.upper() in title_upper]
         if len(models_found) >= 2:
-            return "MSKU"
+            logger.debug(f"Dropped MSKU listing candidate: {cleaned_title}")
+            return False
 
-        # 5. Extract and verify precise model target matching
-        if self.extract_model(clean_title, target_model.upper()) != target_model.upper():
-            return "INVALID"
+        return True
 
-        return "VALID"
-
-    def extract_specific_attributes(self, html_content: str, item: MarketItem) -> MarketItem:
-        """Parses raw leaf-node description HTML to evaluate and flag potential
-        hardware defect indicators such as bent processor pins or general failures.
+    def get_price_brackets(self, target_type: str = "used") -> List[Tuple[float, float]]:
         """
-        html_lower = html_content.lower()
+        Dynamically chunks search windows into targeted steps based on category profiles.
+        Supports: 'active', 'used', or 'broken'.
+        """
+        harvest_block = self.config.get("historical_harvest" if target_type != "active" else "active_harvest", {})
+        
+        # Determine explicit bounds using fallback parameters matching system thresholds
+        if target_type == "active":
+            min_p = float(harvest_block.get("min_price", 50.0))
+            max_p = float(harvest_block.get("max_price", 650.0))
+        elif target_type == "broken":
+            min_p = float(harvest_block.get("min_price_broken", 50.0))
+            max_p = float(harvest_block.get("max_price_broken", 150.0))
+        else:  # 'used'
+            min_p = float(harvest_block.get("min_price_used", 115.0))
+            max_p = float(harvest_block.get("max_price_used", 650.0))
 
-        # Evaluate dynamic defect queries from config
-        defect_queries = self.config.get("defect_queries", ["bent", "broken", "parts only"])
-        has_defect = any(q.lower() in html_lower for q in defect_queries)
-
-        # Specific target patterns matching your DB schema fields
-        has_bent_pins = "bent pin" in html_lower or "bent pins" in html_lower
-        is_parts_only = item.condition_id == 7000 or "parts only" in html_lower
-
-        # Mutate flags into dataclass properties safely
-        item.is_for_parts_or_not_working = is_parts_only or has_defect
-        item.has_bent_pins = has_bent_pins
-        item.process_state = "HYDRATED"
-
-        return item
-
-    def is_valid_standalone(self, item: MarketItem) -> bool:
-        return "combo" not in item.title.lower()
-
-    def get_price_brackets(self, pass_type: str = "used") -> list[tuple[float, float]]:
-        harvest = self.config.get("historical_harvest", {})
-
-        # Determine which YAML keys to use based on the pass type
-        prefix = "broken" if pass_type == "broken" else "used"
-        min_p = float(harvest.get(f"min_price_{prefix}", 110.0))
-        max_p = float(harvest.get(f"max_price_{prefix}", 140.0))
-        step = float(harvest.get("step_size", 5.0))
-
+        step = float(harvest_block.get("step_size", 10.0))
+        
         brackets = []
         current = min_p
         while current < max_p:
             upper = min(current + step, max_p)
             brackets.append((current, upper))
             current += step
+            
         return brackets
 
+    def parse_active(self, raw_data: Dict[str, Any], target_model: str) -> Optional[ActiveMarketItem]:
+        raw_title = raw_data.get("title", "")
+        extracted_model = self.extract_model(raw_title)
+        cleaned_title = self.clean_title(raw_title)
 
-class ActiveCPUStrategy(CPUStrategy):
-    @property
-    def category_id(self) -> str:
-        return str(self.config.get("active_harvest", {}).get("ebay_category_id", "164"))
+        if extracted_model != target_model.upper() or not self.is_valid_listing(cleaned_title, extracted_model):
+            return None
 
-    @property
-    def price_bounds(self) -> tuple[float, float]:
-        harvest = self.config.get("active_harvest", {})
-        return float(harvest.get("min_price", 50.0)), float(harvest.get("max_price", 650.0))
+        price = float(raw_data.get("price", 0.0))
+        shipping = float(raw_data.get("shipping", 0.0))
+        condition_id = int(raw_data.get("condition_id", 3000))
 
-    @property
-    def step_size(self) -> float:
-        return float(self.config.get("active_harvest", {}).get("step_size", 10.0))
+        return ActiveMarketItem(
+            item_id=str(raw_data.get("item_id")),
+            source_platform=raw_data.get("source_platform", "ebay"),
+            model_name=extracted_model,
+            category=self.category_name,
+            raw_title=raw_title,
+            title=cleaned_title,
+            price=price,
+            shipping_cost=shipping,
+            total_cost=round(price + shipping, 2),
+            condition_id=condition_id,
+            seller_username=raw_data.get("seller_username"),
+            feedback_score=raw_data.get("feedback_score"),
+            feedback_percentage=raw_data.get("feedback_percentage"),
+            is_top_rated=bool(raw_data.get("is_top_rated", False)),
+            has_bent_pins="BENT" in raw_title.upper(),
+            is_for_parts_or_not_working=(condition_id == 7000 or "PARTS" in raw_title.upper()),
+            bid_count=int(raw_data.get("bid_count", 0)),
+            quantity_available=int(raw_data.get("quantity_available", 1)),
+            item_url=raw_data.get("item_url", ""),
+            image_urls=raw_data.get("image_urls") if isinstance(raw_data.get("image_urls"), list) else []
+        )
 
-    @property
-    def max_price_cap(self) -> float:
-        _, max_p = self.price_bounds
-        return max_p
+    def parse_historical(self, raw_data: Dict[str, Any], target_model: str) -> Optional[HistoricalMarketItem]:
+        raw_title = raw_data.get("title", "")
+        extracted_model = self.extract_model(raw_title)
+        cleaned_title = self.clean_title(raw_title)
 
+        if extracted_model != target_model.upper() or not self.is_valid_listing(cleaned_title, extracted_model):
+            return None
 
-class HistoricalCPUStrategy(CPUStrategy):
-    @property
-    def category_id(self) -> str:
-        return str(self.config.get("historical_harvest", {}).get("ebay_category_id", "164"))
+        price = float(raw_data.get("price", 0.0))
+        shipping = float(raw_data.get("shipping", 0.0))
 
-    @property
-    def price_bounds(self) -> tuple[float, float]:
-        harvest = self.config.get("historical_harvest", {})
-        return float(harvest.get("min_price_used", 115.0)), float(harvest.get("max_price_used", 650.0))
-
-    @property
-    def step_size(self) -> float:
-        return float(self.config.get("historical_harvest", {}).get("step_size", 10.0))
-
-    @property
-    def max_price_cap(self) -> float:
-        _, max_p = self.price_bounds
-        return max_p
+        return HistoricalMarketItem(
+            item_id=str(raw_data.get("item_id")),
+            source_platform=raw_data.get("source_platform", "ebay"),
+            model_name=extracted_model,
+            category=self.category_name,
+            raw_title=raw_title,
+            title=cleaned_title,
+            price=price,
+            shipping_cost=shipping,
+            total_cost=round(price + shipping, 2),
+            condition_id=int(raw_data.get("condition_id", 3000)),
+            is_sold=bool(raw_data.get("is_sold", True)),
+            quantity_sold=int(raw_data.get("quantity_sold", 1)),
+            bid_count=int(raw_data.get("bid_count", 0)),
+            seller_username=raw_data.get("seller_username"),
+            feedback_score=raw_data.get("feedback_score"),
+            feedback_percentage=raw_data.get("feedback_percentage"),
+            item_url=raw_data.get("item_url", "")
+        )

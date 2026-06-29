@@ -1,80 +1,77 @@
 # src/analysis/strategy/base_category_strategy.py
+"""
+Bazaar Strategy Contract Infrastructure
+
+Defines the abstract interface for hardware-specific domain strategies.
+Strategies are responsible for parsing, normalization, validation, and schema
+hydration, abstracting marketplace-specific layouts away from core business logic.
+"""
 
 from abc import ABC, abstractmethod
-from typing import List, Tuple
-from src.core.models import HistoricalMarketItem
+from typing import List, Tuple, Dict, Any, Optional
+from src.core.models import ActiveMarketItem, HistoricalMarketItem
+
 
 class BaseCategoryStrategy(ABC):
-    def __init__(self, category_name: str, yaml_data: dict):
-        # 1. Core identification markers
+    def __init__(self, category_name: str, yaml_config: dict):
+        """
+        Initializes the category strategy with isolated configuration parameters.
+        
+        Args:
+            category_name: Uppercase string identifier (e.g., 'CPU').
+            yaml_config: Pre-sliced segment corresponding strictly to this category 
+                        from categories.yaml.
+        """
         self.category_name = category_name.upper()
-        self.raw_yaml_matrix = yaml_data
-
-        # 2. Extract and scope target category child block safely
-        if isinstance(yaml_data, dict) and category_name in yaml_data:
-            self.config = yaml_data[category_name]
-        else:
-            self.config = yaml_data or {}
-
-        # 3. Guard property fallback states internally
-        self._blacklist_words = self.config.get("blacklist_words", [])
-        self._local_noise_blacklist = self.config.get("local_noise_blacklist", [])
-
-    @property
-    def blacklist_words(self) -> List[str]:
-        return getattr(self, '_blacklist_words', self.config.get("blacklist_words", []))
-
-    @property
-    def local_noise_blacklist(self) -> List[str]:
-        return self.config.get("local_noise_blacklist", [])
+        self.config = yaml_config or {}
 
     @property
     def valid_models(self) -> List[str]:
+        """List of target model numbers or string names allowed under this category."""
         return self.config.get("valid_models", [])
 
     @property
     def search_format(self) -> str:
+        """The platform-specific query template used to build search strings."""
         return self.config.get("search_format", "{model}")
 
     @property
-    @abstractmethod
-    def category_id(self) -> str:
-        """Returns targeted operational pathway category ID string."""
-        pass
-
-    @property
-    @abstractmethod
     def price_bounds(self) -> Tuple[float, float]:
-        """Returns a tuple of (min_price, max_price) for the current execution."""
-        pass
-
-    @property
-    @abstractmethod
-    def step_size(self) -> float:
-        """Returns step increment for search bracket slicing."""
-        pass
+        """
+        Fallback hard limits for parsing sweeps. 
+        Returns a tuple of (min_price, max_price).
+        """
+        bounds = self.config.get("price_bounds", [0.0, 9999.0])
+        return float(bounds[0]), float(bounds[1])
 
     @abstractmethod
     def clean_title(self, raw_title: str) -> str:
-        """Strips out marketing and structural noise phrases from source string."""
+        """Strips marketing clutter, emojis, and structural noise out of a raw listing title."""
         pass
 
     @abstractmethod
-    def extract_model(self, title_upper: str, target_upper: str) -> str:
-        """Identifies and assigns exact canonical component matches."""
+    def extract_model(self, raw_title: str) -> str:
+        """Applies regex pattern matching to map structural titles to canonical model references."""
         pass
 
     @abstractmethod
-    def is_valid(self, title: str, target_model: str) -> str:
-        """Evaluates noise blacklists and structural constraints to return state tags."""
+    def is_valid_listing(self, cleaned_title: str, extracted_model: str) -> bool:
+        """Evaluates blacklist tokens and string combinations to drop junk listings."""
+        pass
+
+    # 🚀 Unified Model Construction Engine Gateway Contracts
+    @abstractmethod
+    def parse_active(self, raw_data: Dict[str, Any], target_model: str) -> Optional[ActiveMarketItem]:
+        """
+        Transforms a raw scraper payload into a validated ActiveMarketItem.
+        Returns None if validation criteria or blacklists fail.
+        """
         pass
 
     @abstractmethod
-    def extract_specific_attributes(self, html_content: str, item: MarketItem) -> MarketItem:
-        """Parses leaf page contents to mutate items up to enriched data grades (e.g., SILVER/GOLD)."""
-        pass
-
-    @abstractmethod
-    def is_valid_standalone(self, item: MarketItem) -> bool:
-        """Verifies if an item can bypass custom multi-sku or combo rule exclusions."""
+    def parse_historical(self, raw_data: Dict[str, Any], target_model: str) -> Optional[HistoricalMarketItem]:
+        """
+        Transforms a raw scraper payload into a validated HistoricalMarketItem.
+        Returns None if validation criteria or blacklists fail.
+        """
         pass
