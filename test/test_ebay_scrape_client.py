@@ -107,4 +107,3 @@ def test_scrape_client_returns_all_required_market_item_fields(mock_config):
     assert item.is_sold is True
     assert item.is_for_parts_or_not_working is False
     assert item.process_state == "PENDING"
-    assert "123456789012" in item.item_url

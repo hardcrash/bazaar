@@ -98,3 +98,4 @@ class HistoricalMarketItem(BaseMarketItem):
 
     # Warehouse Metadata
     data_grade: str = Field("BRONZE", description="Information depth structure index tier: BRONZE, SILVER, GOLD")
+
