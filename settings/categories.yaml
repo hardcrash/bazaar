@@ -105,15 +105,33 @@ CPU:
     "SYSTEM BUILT", "DESKTOP TOWER", "BUNDLE", "LAPTOP", "PC", "BAREBONES", "SYSTEM"
   ]
 
+  # 🌟 Hardware Salvage Indicators: Explicit physical/functional defects
+  salvage_keywords: [
+    "BENT PIN", "BENT PINS", "MISSING PIN", "MISSING PINS", 
+    "FOR PARTS", "NOT WORKING", "FOR REPAIR", "DEAD", "AS IS", 
+    "AS-IS", "UNTESTED", "NO BOOT", "DEFECTIVE", "DAMAGED", "BROKEN"
+  ]
+
+  # 🌟 Distress Signals: Cryptic patterns requiring deep description validation
+  distress_keywords: [
+    "READ DESCRIPTION", "READ DESC", "READ DETAILS", "PLEASE READ", 
+    "READ TILL END", "ISSUES", "READ!", "NOTE"
+  ]
+
+  # 🌟 Explicit Functionality Guards: Keywords that reduce classification uncertainty
+  functional_keywords: [
+    "TESTED WORKING", "100% WORKING", "PERFECT", "EXCELLENT"
+  ]
+
   # Paramaters for the active listings harvest pipeline.
   active_harvest:
     enabled: true
     limit_per_sweep: 200
     min_price: 50
-    max_price: 650
-    step_size: 600.0  
+    max_price: 300
+    step_size: 20.0  
     ebay_category_id: 164
-    ebay_condition: [2000, 3000, 7000]
+    ebay_condition: []
 
   # Parameters for the historical listings harvets pipeline.
   historical_harvest:
