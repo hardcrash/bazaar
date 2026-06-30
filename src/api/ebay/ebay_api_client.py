@@ -73,11 +73,12 @@ class EbayApiClient:
         """Helper to safely build and format native REST filter string rules dynamically."""
         clauses = list(base_clauses) if base_clauses else []
 
-        if condition_input:
-            if isinstance(condition_input, list):
+        # Check explicitly for None so empty lists or specific integer 0 values pass cleanly
+        if condition_input is not None:
+            if isinstance(condition_input, list) and len(condition_input) > 0:
                 cond_str = "|".join(str(c) for c in condition_input)
                 clauses.append(f"conditions:{{{cond_str}}}")
-            else:
+            elif not isinstance(condition_input, list):
                 clauses.append(f"conditions:{{{condition_input}}}")
 
         if min_price is not None or max_price is not None:
