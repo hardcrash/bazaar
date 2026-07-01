@@ -116,6 +116,8 @@ class DatabaseManager:
 
                     session.execute(stmt)
                     upsert_count += 1
+                    
+                logger.info(f"📊 Pipeline extraction summary: Received {len(final_records)} items -> Staged {upsert_count} rows for insertion.")
 
                 session.commit()
                 return upsert_count

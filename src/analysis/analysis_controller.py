@@ -32,4 +32,4 @@ class AnalysisController:
             return self.historical_controller.run_harvest(**kwargs)
         else:
             logger.error(f"❌ Aborted route processing: Unrecognized harvest mode configuration token: '{mode}'")
-            return {"status": "INVALID_MODE", "inserted_records": 0, "total_processed": 0}S
+            return {"status": "INVALID_MODE", "inserted_records": 0, "total_processed": 0}

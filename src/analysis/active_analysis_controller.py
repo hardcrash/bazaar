@@ -39,15 +39,11 @@ class ActiveAnalysisController(BaseController):
         harvest_cfg = strategy.config.get("active_harvest", {})
         category_id = category_id or str(harvest_cfg.get("ebay_category_id", "164"))
 
-        # 2. Build our query with compiled exclusion filtering blocks
+        # 2. Build our query (Keep outbound API query lean; let strategy filter noise)
         if not query:
             fmt = strategy.config.get("search_format", "Ryzen {model}")
-            base_query = fmt.format(model=model_name)
-            
-            # Read from unified categories structure keys
-            blacklist_words = strategy.config.get("blacklist_words", []) or strategy.config.get("local_noise_blacklist", [])
-            exclusions = " ".join([f"-{word}" for word in blacklist_words])
-            query = f"{base_query} {exclusions}".strip()
+            query = fmt.format(model=model_name).strip()
+
 
         # 3. Generate pricing step windows
         target_passes = []
@@ -66,51 +62,69 @@ class ActiveAnalysisController(BaseController):
         all_validated_items: List[ActiveMarketItem] = []
 
         # 4. Perform network sweeps
+        limit_per_sweep = int(harvest_cfg.get("limit_per_sweep", 200))
+        ebay_request_limit = 50  # Max chunk size allowed by eBay Browse REST API
+
         for p_idx, target in enumerate(target_passes):
-            logger.info(f"🔄 Active Sourcing Pass [{p_idx + 1}/{len(target_passes)}]: {target['min_p']} to {target['max_p']}")
+            logger.info(f"🔄 Active Sourcing Pass [{p_idx + 1}/{len(target_passes)}]: ${target['min_p']} to ${target['max_p']}")
             
-            raw_summaries = self.ebay_api_client.search_active_items(
-                query=query,
-                min_price=target['min_p'],
-                max_price=target['max_p'],
-                category_id=category_id,
-                condition_id=target['conditions']
-            )
-            
-            if not raw_summaries:
-                continue
+            current_offset = 0
+            collected_for_bracket = 0
 
-            for raw_item in raw_summaries:
-                try:
-                    # Map API parameters into strategy processing data keys
-                    shipping_opts = raw_item.get("shippingOptions", [{}])
-                    shipping_cost = float(shipping_opts[0].get("shippingCost", {}).get("value", 0.0)) if shipping_opts else 0.0
-                    
-                    normalized_data = {
-                        "item_id": raw_item.get("itemId"),
-                        "source_platform": "ebay",
-                        "title": raw_item.get("title", ""),
-                        "price": float(raw_item.get("price", {}).get("value", 0.0)),
-                        "shipping": shipping_cost,
-                        "condition_id": int(raw_item.get("conditionId", 3000)),
-                        "seller_username": raw_item.get("seller", {}).get("username"),
-                        "item_url": raw_item.get("itemWebUrl", ""),
-                        "bid_count": int(raw_item.get("bidCount", 0)),
-                        "quantity_available": int(raw_item.get("quantityLimitPerBuyer", 1)),
-                        "image_urls": [raw_item.get("image", {}).get("imageUrl")] if raw_item.get("image") else []
-                    }
+            # Page-stepping execution loop within the individual bracket bounds
+            while collected_for_bracket < limit_per_sweep:
+                logger.debug(
+                    f"🔍 Requesting chunk at offset {current_offset} (Collected {collected_for_bracket}/{limit_per_sweep}) "
+                    f"| Query: [ {query} ]"
+                )
 
-                    # 🎯 FIXED: Let the strategy handle validation, model checks, and parsing entirely!
-                    validated_listing = strategy.parse_active(raw_data=normalized_data, target_model=model_name)
-                    if validated_listing:
-                        all_validated_items.append(validated_listing)
+                raw_summaries = self.ebay_api_client.search_active_items(
+                    query=query,
+                    limit=ebay_request_limit,
+                    offset=current_offset,  # 🌟 Dynamically shifts the page window
+                    min_price=target['min_p'],
+                    max_price=target['max_p'],
+                    category_id=category_id,
+                    condition_id=target['conditions']
+                )
+                
+                # Guard: If a page is completely empty, this price bracket is exhausted
+                if not raw_summaries:
+                    break
+
+                for raw_item in raw_summaries:
+                    try:
+                        shipping_opts = raw_item.get("shippingOptions", [{}])
+                        shipping_cost = float(shipping_opts[0].get("shippingCost", {}).get("value", 0.0)) if shipping_opts else 0.0
                         
-                except Exception as parse_err:
-                    logger.debug(f"Skipping malformed live listing frame: {parse_err}")
+                        normalized_data = {
+                            "item_id": raw_item.get("itemId"),
+                            "source_platform": "ebay",
+                            "title": raw_item.get("title", ""),
+                            "price": float(raw_item.get("price", {}).get("value", 0.0)),
+                            "shipping": shipping_cost,
+                            "condition_id": int(raw_item.get("conditionId", 3000)),
+                            "seller_username": raw_item.get("seller", {}).get("username"),
+                            "item_url": raw_item.get("itemWebUrl", ""),
+                            "bid_count": int(raw_item.get("bidCount", 0)),
+                            "quantity_available": int(raw_item.get("quantityLimitPerBuyer", 1)),
+                            "image_urls": [raw_item.get("image", {}).get("imageUrl")] if raw_item.get("image") else []
+                        }
 
-        if not all_validated_items:
-            logger.warning("⚠️ Active pipeline search pass produced 0 index results after strategy validation.")
-            return {"status": "EMPTY", "inserted_records": 0, "total_processed": 0}
+                        validated_listing = strategy.parse_active(raw_data=normalized_data, target_model=model_name)
+                        if validated_listing:
+                            all_validated_items.append(validated_listing)
+                            
+                    except Exception as parse_err:
+                        logger.debug(f"Skipping malformed live listing frame: {parse_err}")
+
+                # Update state increments following completion of the chunk parse sweep
+                current_offset += len(raw_summaries)
+                collected_for_bracket += len(raw_summaries)
+
+                # Hard break if the native response size drops below our requested limit chunk size
+                if len(raw_summaries) < ebay_request_limit:
+                    break
 
         # 5. Filter against existing primary key IDs in database
         unseen_items = self.filter_new_items(all_validated_items)

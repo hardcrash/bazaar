@@ -1,150 +1,177 @@
-# settings/categories.yaml
 # ==============================================================================
 # CATEGORY INTERPOLATION REGISTRY - HARDWARE EXTRACTION LAYER
 # ==============================================================================
-# Configures native platform sweeps, text processing filters, and heuristic
-# validation thresholds for parsing hardware targets from volatile unstructured markets.
-# Sub-arrays handle layout token clearing, variant classification mapping, 
-# and localized noise blacklists to target specific platform conditions.
+# Configures platform sweeps, text processing filters, and heuristic validation.
 
 CPU:
   strategy_class: "CpuStrategy"
+  
+  # ========================================================
+  # Global Configuration (Shared across Active & Historical)
+  # ========================================================
+  global:
+    search_format: "Ryzen {model}"
+    
+    # Active testing model (Swap with commented block below for production)
+    valid_models: [
+      "5800X"
+    ]
 
-  # 🌟 Live Sourcing Queries: Targeted defect-first hunting terms
-  defect_queries: [
-    "AM4 bent",
-    "AM4 bent pins",
-    "AM4 broken pins",
-    "Ryzen bent pins"
-  ]
+    # Target boundaries to isolate standalone silicon from accessory/whole-system noise
+    model_price_profiles:
+      "5950X":
+        used_min: 160.00
+        used_max: 260.00
+        broken_min: 35.00
+        broken_max: 100.00
+      "5900X":
+        used_min: 120.00
+        used_max: 180.00
+        broken_min: 25.00
+        broken_max: 75.00
+      "5800X3D":
+        used_min: 150.00
+        used_max: 240.00
+        broken_min: 40.00
+        broken_max: 110.00
+      "5800X":
+        used_min: 90.00
+        used_max: 140.00
+        broken_min: 15.00
+        broken_max: 55.00
+      "5700X3D":
+        used_min: 120.00
+        used_max: 170.00
+        broken_min: 25.00
+        broken_max: 70.00
+      "5700X":
+        used_min: 80.00
+        used_max: 120.00
+        broken_min: 15.00
+        broken_max: 45.00
+      "5600X":
+        used_min: 60.00
+        used_max: 95.00
+        broken_min: 10.00
+        broken_max: 35.00
 
-  # 🌟 Valuation Baseline Queries: Specific high-value 5000-series AM4 chips
-  valid_models: [
-    "5800X"
-  ]
+    model_variants:
+      "5950X": ["5950X"]
+      "5900X": ["5900X", "5900XT", "5900"]
+      "5800X": ["5800X", "5800X3D", "5800XT", "5800"]
+      "5700X": ["5700X", "5700X3D"]
+      "5600X": ["5600X", "5600X3D", "5600XT", "5600"]
 
-#   valid_models: [
-#   "5950X",
-#   "5900XT",
-#   "5900 XT",
-#   "5900X",
-#   "5900 X",
-#   "5900",
-#   "5800X3D",
-#   "5800 X3D",
-#   "5800XT",
-#   "5800 XT",
-#   "5800X",
-#   "5800 X",
-#   "5800",
-#   "5700X3D",
-#   "5700 X3D",
-#   "5700X",
-#   "5700 X",
-#   "5600X3D",
-#   "5600 X3D",
-#   "5600XT",
-#   "5600 XT",
-#   "5600X",
-#   "5600 X",
-#   "5600"
-# ]
+    multisku_models: [
+      "5600X", "5700X", "5700X3D", "5800X", "5800X3D", "5900X", "5950X"
+    ]
 
-  model_variants:
-    "5950X": ["5950X"]
-    "5900X": ["5900X", "5900XT", "5900"]
-    "5800X": ["5800X", "5800X3D", "5800XT", "5800"]
-    "5700X": ["5700X", "5700X3D"]
-    "5600X": ["5600X", "5600X3D", "5600XT", "5600"]
+    title_noise_words: [
+      "DDR4", "DDR5", "CPU", "SOCKET", "L@@K", "LOOK", "MINT", "PERFECT", 
+      "TESTED", "WORKING", "FAST SHIP", "FAST SHIPPING", "FREE SHIPPING", 
+      "MUST SEE", "GREAT DEAL", "NIB", "BNIB", "NEW"
+    ]
 
-  # 🌟 Multi-Sku Matrix Pool: Models to check for cross-bleed dropdown listings
-  multisku_models: [
-    "5600X", "5700X", "5700X3D", "5800X", "5800X3D", "5900X", "5950X"
-  ]
+    local_noise_blacklist:
+      # Absolute unrepairable physical damage
+      - "DELIDDED"
+      - "DELID"
+      - "CRACKED DIE"
+      - "CRACKED"
+      - "BURNT"
+      - "BURNED"
+      - "SHORTED"
+      - "SMOKE"
+      - "REFLOW"
+      - "CHIPPED"
+      # Component/Accessory cross-bleed
+      - "INTEL"
+      - "XEON"
+      - "AIO COOLER"
+      - "THERMAL PASTE"
+      - "PASTE ONLY"
+      - "BOX ONLY"
+      - "EMPTY BOX"
+      - "PACKAGING ONLY"
+      - "RETAIL BOX ONLY"
+      - "FAN ONLY"
+      - "COOLER ONLY"
+      - "HEATSINK ONLY"
+      - "NO CPU"
+      - "LESS CPU"
+      # Whole-system structural overlaps
+      - "MOBO COMBO"
+      - "FULL TOWER"
+      - "GAMING RIG"
+      - "GAMING PC"
+      - "FULL PC"
+      - "DESKTOP PC"
+      - "SYSTEM BUILT"
+      - "DESKTOP TOWER"
 
-  brands: ["AMD"]
+    api_blacklist_words: [
+      "BUNDLE", "LAPTOP", "PC", "BAREBONES", "SYSTEM", "OPTANE", "P4800X", "P5800X", "HP IC"
+    ]
 
-  search_format: "Ryzen {model}"
-
-  # Keeps regex focused solely on capturing Zen 3 (5000 series) variants
-  patterns: ["RYZEN(?:\\s+[579])?\\s+(5\\d{3}(?:X3D|X|G|GE|XT)?)\\b"]
-
-  title_noise_words: [
-    "DDR4", "DDR5", "CPU", "SOCKET", 
-    "L@@K", "LOOK", "MINT", "PERFECT", "TESTED", "WORKING", 
-    "FAST SHIP", "FAST SHIPPING", "FREE SHIPPING", "MUST SEE", "GREAT DEAL", 
-    "NIB", "BNIB", "NEW"
-  ]
-
-  # Native eBay API and scrape exclusion filters compiled at runtime (Keeps keyword count under 15)
-  blacklist_words: [
-    # "BUNDLE", "LAPTOP", "PC", "BAREBONES", "SYSTEM", "OPTANE", "P4800X", "P5800X", "HP IC"
-  ]
-
-  local_noise_blacklist: [
-    # --- Structural Overlaps ---
-    "SAW", "BLADE", "HSS", "TOOL STEEL", "MACHINERY", "WAVE",
-    "ROCKFORD", "FOSGATE", "AMPLIFIER", "AMP COMBO", "MOBO COMBO",
-    "SUPPORT FOR", "COMPATIBLE WITH", "DIXIE", "MA5800", "YAMAYO",
-    "MOOG JOINT", "VVG",
-
-    # --- Industrial & Heavy Machinery Part Collisions ---
-    "CUMMINS", "FUEL INJECTOR", "FUEL NOZZLE", "GASKET", "VALVE",
-    "HONDA CARBURETOR", "ENGINE", "GARDEN MOWER", "FLANGE PUMP",
-    "BEARING SEAL",
-
-    # --- Component-Only / Accessory Cross-listings ---
-    "INTEL", "XEON", "I7", "I9", "NVIDIA", "GEFORCE", "RTX",
-    "AIO COOLER", "THERMAL PASTE", "PASTE ONLY",
-    "BOX ONLY", "EMPTY BOX", "PACKAGING ONLY", "RETAIL BOX ONLY",
-    "FAN ONLY", "COOLER ONLY", "HEATSINK ONLY", "NO CPU", "LESS CPU", "OPTANE", 
-    "P4800X", "P5800X", "HP IC",
-
-    # --- Full System Exclusions ---
-    "FULL TOWER", "GAMING RIG", "GAMING PC", "FULL PC", "DESKTOP PC",
-    "SYSTEM BUILT", "DESKTOP TOWER", "BUNDLE", "LAPTOP", "PC", "BAREBONES", "SYSTEM"
-  ]
-
-  # 🌟 Hardware Salvage Indicators: Explicit physical/functional defects
-  salvage_keywords: [
-    "BENT PIN", "BENT PINS", "MISSING PIN", "MISSING PINS", 
-    "FOR PARTS", "NOT WORKING", "FOR REPAIR", "DEAD", "AS IS", 
-    "AS-IS", "UNTESTED", "NO BOOT", "DEFECTIVE", "DAMAGED", "BROKEN"
-  ]
-
-  # 🌟 Distress Signals: Cryptic patterns requiring deep description validation
-  distress_keywords: [
-    "READ DESCRIPTION", "READ DESC", "READ DETAILS", "PLEASE READ", 
-    "READ TILL END", "ISSUES", "READ!", "NOTE"
-  ]
-
-  # 🌟 Explicit Functionality Guards: Keywords that reduce classification uncertainty
-  functional_keywords: [
-    "TESTED WORKING", "100% WORKING", "PERFECT", "EXCELLENT"
-  ]
-
-  # Paramaters for the active listings harvest pipeline.
+ # ========================================================
+  # Active Listings Harvest Pipeline
+  # ========================================================
   active_harvest:
     enabled: true
-    limit_per_sweep: 200
-    min_price: 50
-    max_price: 300
+    limit_per_sweep: 500
+    min_price: 10.00  
+    max_price: 300.00
     step_size: 20.0  
     ebay_category_id: 164
-    ebay_condition: []
+    # Focus exclusively on "For Parts or Not Working" at the source harvest level
+    ebay_condition: [7000]
 
-  # Parameters for the historical listings harvets pipeline.
+    alternative_queries: [
+      "AM4 bent",
+      "AM4 bent pins",
+      "AM4 broken pins",
+      "Ryzen bent pins"
+    ]
+
+    # Domain configuration: Target mechanical defects explicitly
+    pin_defect_keywords: [
+      "BENT PIN", "BENT PINS", "MISSING PIN", "MISSING PINS", 
+      "BROKEN PIN", "BROKEN PINS", "SNAPPED PIN", "SNAPPED PINS",
+      "DAMAGED PIN", "DAMAGED PINS"
+    ]
+
+    salvage_keywords: [
+      "FOR REPAIR", "DEFECTIVE", "DAMAGED", "BROKEN"
+    ]
+
+    distress_keywords: [
+      "READ DESCRIPTION", "READ DESC", "READ DETAILS", "PLEASE READ", "ISSUES"
+    ]
+
+    functional_keywords: [
+      "TESTED WORKING", "100% WORKING", "PERFECT", "EXCELLENT"
+    ]
+
+  # ========================================================
+  # Historical Listings Harvest Pipeline
+  # ========================================================
   historical_harvest:
     enabled: true
-    limit_per_sweep: 2000
+    limit_per_sweep: 500
     require_sold: true
     step_size: 10.0 
     ebay_category_id: [164]
-    ebay_condition: []
-    # Price boundaries for broken (sourcing) parts.   
-    min_price_broken: 80
-    max_price_broken: 100
-    # Price boundaries for  used/refurbished parts. 
-    min_price_used: 110
-    max_price_used: 130 
+    ebay_condition: [2000, 3000, 7000]
     
+    # Note: Target thresholds are now handled dynamically via global.model_price_profiles
+    use_profile_bounds: true
+
+    alternative_queries: []
+
+# ========================================================
+# Production Reference Block (Uncomment when testing completes)
+# ========================================================
+#     valid_models: [
+#       "5950X", "5900XT", "5900X", "5900", "5800X3D", "5800XT", 
+#       "5800X", "5800", "5700X3D", "5700X", "5600X3D", "5600XT", "5600X", "5600"
+#     ]

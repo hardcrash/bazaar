@@ -1,4 +1,3 @@
-# src/analysis/strategy/analysis_strategy_factory.py
 """
 Bazaar Analysis Strategy Factory
 
@@ -7,8 +6,11 @@ out of global configurations, and initializing domain processing strategies.
 """
 
 from typing import Any
+from loguru import logger
+from pydantic import ValidationError
 from src.analysis.strategy.cpu_strategy import CPUStrategy
 from src.analysis.strategy.base_category_strategy import BaseCategoryStrategy
+from src.analysis.schema.config_schema import CpuStrategyConfig
 
 
 class AnalysisStrategyFactory:
@@ -17,13 +19,6 @@ class AnalysisStrategyFactory:
         """
         Extracts relevant category slices out of the configuration map
         and initializes a unified domain evaluation strategy object.
-        
-        Args:
-            category_key: Target hardware category token (e.g., 'CPU').
-            config: Global application config object or raw dictionary layout.
-            
-        Returns:
-            An instantiated concrete instance of CPUStrategy.
         """
         cat_upper = category_key.upper()
 
@@ -42,9 +37,18 @@ class AnalysisStrategyFactory:
         if not category_yaml:
             raise ValueError(f"❌ Configuration matrix missing for category tracking tier: {cat_upper}")
 
-        # 3. Polymorphic routing matrix
+        # 3. Polymorphic routing matrix with validation step
         if cat_upper == "CPU":
-            return CPUStrategy(category_name="CPU", yaml_config=category_yaml)
+            try:
+                # Validate raw dictionary data against Pydantic schema contract
+                validated_config = CpuStrategyConfig.model_validate(category_yaml)
+                logger.success("✅ CPU Category configurations verified successfully against schema contract.")
+            except ValidationError as e:
+                logger.critical(f"❌ Configuration contract breach detected for CPU category specifications!")
+                raise e
+    
+            # FIX: Match the positional parameter name expected by CPUStrategy's constructor
+            return CPUStrategy(category_name="CPU", yaml_config=validated_config)
             
         elif "MOTHERBOARD" in cat_upper:
             raise NotImplementedError("Motherboard strategy structures are coming next!")
